@@ -10,7 +10,7 @@
 ;;; Commentary:
 ;;
 ;; Provides a buffer manager with tabulated list view of all open agent-shell buffers,
-;; showing folder name, session status, and other details.
+;; showing buffer name, session status, and other details.
 ;;
 ;; Features:
 ;; - View all agent-shell buffers in a tabulated list
@@ -99,12 +99,12 @@ Key bindings:
 
 \\{agent-shell-manager-mode-map}"
   (setq tabulated-list-format
-        [("Folder" 60 t)
+        [("Buffer" 60 t)
          ("Status" 15 t)
          ("Session" 10 t)
          ("Mode" 15 t)])
   (setq tabulated-list-padding 2)
-  (setq tabulated-list-sort-key (cons "Folder" nil))
+  (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
   
   ;; Set up auto-refresh timer (refresh every 2 seconds)
@@ -178,11 +178,9 @@ Returns one of: waiting, ready, working, killed, or unknown."
           "initializing")
          (t "unknown"))))))
 
-(defun agent-shell-manager--get-folder (buffer)
-  "Get the full folder path for BUFFER."
-  (with-current-buffer buffer
-    (abbreviate-file-name
-     (string-remove-suffix "/" default-directory))))
+(defun agent-shell-manager--get-buffer-name (buffer)
+  "Get the buffer name for BUFFER."
+  (buffer-name buffer))
 
 (defun agent-shell-manager--get-session-status (buffer)
   "Get session status for BUFFER."
@@ -206,6 +204,16 @@ Returns one of: waiting, ready, working, killed, or unknown."
             "-")
       "-")))
 
+(defun agent-shell-manager--get-agent-kind (buffer)
+  "Get the agent kind for BUFFER by parsing the buffer name."
+  (with-current-buffer buffer
+    (let ((buffer-name (buffer-name)))
+      ;; Buffer names are in the format: "Agent Name Agent @ /path/to/dir"
+      ;; Extract the agent name before " Agent @ "
+      (if (string-match "^\\(.*?\\) Agent @ " buffer-name)
+          (match-string 1 buffer-name)
+        "-"))))
+
 (defun agent-shell-manager--status-face (status)
   "Return face for STATUS string."
   (cond
@@ -225,13 +233,12 @@ Returns one of: waiting, ready, working, killed, or unknown."
          (entries (mapcar
                    (lambda (buffer-name)
                      (let* ((buffer (get-buffer buffer-name))
-                            (folder (agent-shell-manager--get-folder buffer))
                             (status (agent-shell-manager--get-status buffer))
                             (session (agent-shell-manager--get-session-status buffer))
                             (mode (agent-shell-manager--get-session-mode buffer)))
                        (list buffer
                              (vector
-                              folder
+                              buffer-name
                               (propertize status 'face (agent-shell-manager--status-face status))
                               session
                               mode))))
@@ -434,7 +441,7 @@ Kills the current process and starts a new one with the same config if possible.
 ;;;###autoload
 (defun agent-shell-manager-toggle ()
   "Toggle the agent-shell buffer list window.
-Shows folder name, agent type, status (ready/waiting/working), session info, and mode.
+Shows buffer name, agent type, status (ready/waiting/working), session info, and mode.
 The position of the window is controlled by `agent-shell-manager-side'."
   (interactive)
   (let* ((buffer (get-buffer-create "*Agent-Shell Buffers*"))
