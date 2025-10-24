@@ -36,7 +36,7 @@
 
 ## Installation
 
-1. Ensure you have [agent-shell](https://github.com/jdtsmith/agent-shell) installed
+1. Ensure you have [agent-shell](https://github.com/xenodium/agent-shell) installed
 2. Place `agent-shell-manager.el` in your Emacs load path
 3. Add to your Emacs configuration:
 
@@ -96,7 +96,7 @@ The manager displays the following status values with color coding:
 ## Requirements
 
 - Emacs 25.1 or later
-- [agent-shell](https://github.com/jdtsmith/agent-shell) package
+- [agent-shell](https://github.com/xenodium/agent-shell) package
 - `tabulated-list` mode (built-in)
 
 ## License
