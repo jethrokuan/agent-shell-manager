@@ -141,20 +141,17 @@ Returns one of: waiting, ready, working, killed, or unknown."
              ;; Both processes must be alive for the shell to be truly alive
              (process-alive (and acp-process-alive comint-process-alive)))
         (cond
-         ;; Check if either the ACP client or comint process is dead or missing
+         ;; Check if comint process is dead or missing - if so, always report killed
+         ((or (not comint-proc)
+              (and (processp comint-proc)
+                   (not comint-process-alive)))
+          "killed")
+         ;; Check if ACP client process is dead or missing (when client exists)
          ((and (map-elt state :client)
                (or (not acp-proc)
-                   (not comint-proc)
                    (and (processp acp-proc)
-                        (not acp-process-alive))
-                   (and (processp comint-proc)
-                        (not comint-process-alive))))
+                        (not acp-process-alive))))
           "killed")
-         ;; Check if buffer is busy (shell-maker function)
-         ((and process-alive
-               (fboundp 'shell-maker-busy)
-               (shell-maker-busy))
-          "working")
          ;; Check if there are pending tool calls
          ((and process-alive
                (map-elt state :tool-calls)
@@ -167,6 +164,11 @@ Returns one of: waiting, ready, working, killed, or unknown."
             (if has-pending-permission
                 "waiting"
               "working")))
+         ;; Check if buffer is busy (shell-maker function)
+         ((and process-alive
+               (fboundp 'shell-maker-busy)
+               (shell-maker-busy))
+          "working")
          ;; Check if session is active (only if process is alive)
          ((and process-alive
                (map-nested-elt state '(:session :id)))
@@ -261,11 +263,37 @@ Returns one of: waiting, ready, working, killed, or unknown."
       (tabulated-list-print t))))
 
 (defun agent-shell-manager-goto ()
-  "Go to the agent-shell buffer at point without closing the manager."
+  "Go to the agent-shell buffer at point without closing the manager.
+If the buffer is already visible, switch to it.
+Otherwise, if another agent-shell window is open, reuse it."
   (interactive)
   (when-let ((buffer (tabulated-list-get-id)))
     (if (buffer-live-p buffer)
-        (agent-shell--display-buffer buffer)
+        (let ((buffer-window (get-buffer-window buffer t))
+              (agent-shell-window nil))
+          (cond
+           ;; If the buffer is already visible, just switch to it
+           (buffer-window
+            (select-window buffer-window))
+           
+           ;; Otherwise, find an existing agent-shell window to reuse
+           (t
+            (walk-windows
+             (lambda (win)
+               (when (and (not agent-shell-window)
+                          (not (eq win (selected-window)))
+                          (with-current-buffer (window-buffer win)
+                            (derived-mode-p 'agent-shell-mode)))
+                 (setq agent-shell-window win)))
+             nil t)
+            
+            (if agent-shell-window
+                ;; Reuse the existing agent-shell window
+                (progn
+                  (set-window-buffer agent-shell-window buffer)
+                  (select-window agent-shell-window))
+              ;; No existing agent-shell window, use default behavior
+              (agent-shell--display-buffer buffer)))))
       (user-error "Buffer no longer exists"))))
 
 (defun agent-shell-manager-kill ()
