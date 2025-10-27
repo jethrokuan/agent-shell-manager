@@ -470,6 +470,6 @@ The position of the window is controlled by `agent-shell-manager-side'."
         (set-window-dedicated-p window t)
         (select-window window)))))
 
-(provide 'agent-shell-manager-buffer)
+(provide 'agent-shell-manager)
 
-;;; agent-shell-manager-buffer.el ends here
+;;; agent-shell-manager.el ends here
