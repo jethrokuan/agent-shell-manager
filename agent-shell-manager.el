@@ -49,11 +49,13 @@
 
 (defcustom agent-shell-manager-side 'bottom
   "Side of the frame to display the agent-shell manager.
-Can be 'left, 'right, 'top, or 'bottom."
+Can be 'left, 'right, 'top, 'bottom, or nil.  When nil, buffer display
+is controlled by the user's display-buffer-alist."
   :type '(choice (const :tag "Left" left)
           (const :tag "Right" right)
           (const :tag "Top" top)
-          (const :tag "Bottom" bottom))
+          (const :tag "Bottom" bottom)
+          (const :tag "User-controlled" nil))
   :group 'agent-shell-manager)
 
 (defvar agent-shell-manager-mode-map
@@ -450,18 +452,26 @@ The position of the window is controlled by `agent-shell-manager-side'."
         ;; Window is visible, hide it
         (delete-window window)
       ;; Window is not visible, show it
-      (let* ((size-param (if (memq agent-shell-manager-side '(left right))
-                             'window-width
-                           'window-height))
-             (window (display-buffer-in-side-window
-                      buffer
-                      `((side . ,agent-shell-manager-side)
-                        (slot . 0)
-                        (,size-param . 0.3)
-                        (preserve-size . ,(if (memq agent-shell-manager-side '(left right))
-                                              '(t . nil)
-                                            '(nil . t)))
-                        (window-parameters . ((no-delete-other-windows . t)))))))
+      (let ((window (if agent-shell-manager-side
+                        ;; Use side window with configured position
+                        (let ((size-param (if (memq agent-shell-manager-side
+                                                    '(left right))
+                                              'window-width
+                                            'window-height)))
+                          (display-buffer-in-side-window
+                           buffer
+                           `((side . ,agent-shell-manager-side)
+                             (slot . 0)
+                             (,size-param . 0.3)
+                             (preserve-size . ,(if (memq
+                                                    agent-shell-manager-side
+                                                    '(left right))
+                                                   '(t . nil)
+                                                 '(nil . t)))
+                             (window-parameters .
+                              ((no-delete-other-windows . t))))))
+                      ;; Use regular window, let user's config control display
+                      (display-buffer buffer))))
         (setq agent-shell-manager--global-buffer buffer)
         (with-current-buffer buffer
           (agent-shell-manager-mode)
