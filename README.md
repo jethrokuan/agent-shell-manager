@@ -32,7 +32,8 @@
 - **Smart Display**:
   - Killed processes are displayed at the bottom in red
   - Status-based color coding for easy visual scanning
-  - Customizable window placement (left, right, top, or bottom)
+  - Customizable window placement (left, right, top, bottom, or
+    user-controlled)
 
 ## Installation
 
@@ -80,7 +81,17 @@ Once the manager buffer is open, you can use these keys:
 Customize where the manager window appears:
 
 ```elisp
-(setq agent-shell-manager-side 'bottom)  ; Options: 'left, 'right, 'top, 'bottom
+;; Options: 'left, 'right, 'top, 'bottom, or nil
+(setq agent-shell-manager-side 'bottom)
+```
+
+When set to `nil`, the package defers to your `display-buffer-alist`
+configuration and window management frameworks (such as shackle,
+popper.el, etc.), giving you full control over window placement:
+
+```elisp
+;; Use dedicated window with user-controlled placement
+(setq agent-shell-manager-side nil)
 ```
 
 ## Status Indicators
