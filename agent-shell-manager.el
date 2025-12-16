@@ -228,13 +228,12 @@ Returns one of: waiting, ready, working, killed, or unknown."
 
 (defun agent-shell-manager--entries ()
   "Return list of entries for tabulated-list."
-  (let* ((buffers (seq-filter
-                   (lambda (buffer-name)
-                     (buffer-live-p (get-buffer buffer-name)))
-                   (agent-shell-buffers)))
+  (let* ((buffers (agent-shell-buffers))
+         (buffers (if (listp buffers) buffers (list buffers)))
+         (buffers (seq-filter #'buffer-live-p buffers))
          (entries (mapcar
-                   (lambda (buffer-name)
-                     (let* ((buffer (get-buffer buffer-name))
+                   (lambda (buffer)
+                     (let* ((buffer-name (buffer-name buffer))
                             (status (agent-shell-manager--get-status buffer))
                             (session (agent-shell-manager--get-session-status buffer))
                             (mode (agent-shell-manager--get-session-mode buffer)))
@@ -276,7 +275,7 @@ Returns one of: waiting, ready, working, killed, or unknown."
 If the buffer is already visible, switch to it.
 Otherwise, if another agent-shell window is open, reuse it."
   (interactive)
-  (when-let ((buffer (tabulated-list-get-id)))
+  (when-let* ((buffer (tabulated-list-get-id)))
     (if (buffer-live-p buffer)
         (let ((buffer-window (get-buffer-window buffer t))
               (agent-shell-window nil))
@@ -308,7 +307,7 @@ Otherwise, if another agent-shell window is open, reuse it."
 (defun agent-shell-manager-kill ()
   "Kill the agent-shell process at point."
   (interactive)
-  (when-let ((buffer (tabulated-list-get-id)))
+  (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
       (user-error "Buffer no longer exists"))
     (when (yes-or-no-p (format "Kill agent-shell process in %s? " (buffer-name buffer)))
@@ -344,7 +343,7 @@ Returns nil if config cannot be determined."
   "Restart the agent-shell at point.
 Kills the current process and starts a new one with the same config if possible."
   (interactive)
-  (when-let ((buffer (tabulated-list-get-id)))
+  (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
       (user-error "Buffer no longer exists"))
     (let ((config (agent-shell-manager--get-buffer-config buffer))
@@ -390,7 +389,7 @@ Kills the current process and starts a new one with the same config if possible.
 (defun agent-shell-manager-set-mode ()
   "Set session mode for the agent-shell at point."
   (interactive)
-  (when-let ((buffer (tabulated-list-get-id)))
+  (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
       (user-error "Buffer no longer exists"))
     (with-current-buffer buffer
@@ -402,7 +401,7 @@ Kills the current process and starts a new one with the same config if possible.
 (defun agent-shell-manager-cycle-mode ()
   "Cycle session mode for the agent-shell at point."
   (interactive)
-  (when-let ((buffer (tabulated-list-get-id)))
+  (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
       (user-error "Buffer no longer exists"))
     (with-current-buffer buffer
@@ -414,7 +413,7 @@ Kills the current process and starts a new one with the same config if possible.
 (defun agent-shell-manager-interrupt ()
   "Interrupt the agent-shell at point."
   (interactive)
-  (when-let ((buffer (tabulated-list-get-id)))
+  (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
       (user-error "Buffer no longer exists"))
     (with-current-buffer buffer
@@ -426,7 +425,7 @@ Kills the current process and starts a new one with the same config if possible.
 (defun agent-shell-manager-view-traffic ()
   "View traffic logs for the agent-shell at point."
   (interactive)
-  (when-let ((buffer (tabulated-list-get-id)))
+  (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
       (user-error "Buffer no longer exists"))
     (with-current-buffer buffer
