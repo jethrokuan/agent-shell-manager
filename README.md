@@ -98,11 +98,13 @@ popper.el, etc.), giving you full control over window placement:
 
 The manager displays the following status values with color coding:
 
-- **ready** (green): Agent is ready for new commands
-- **working** (yellow): Agent is actively processing
-- **waiting** (blue): Agent is waiting for user input/permission
-- **initializing** (gray): Agent is starting up
-- **killed** (red): Process has been terminated
+- **Ready** (green): Agent is fully operational and waiting for your input
+- **Working** (yellow): Agent is actively processing your request
+- **Waiting** (blue): Agent is waiting for user input or permission approval
+- **Starting...** (gray): Agent is initializing and starting up
+- **No Session** (gray): Agent process is running but no conversation session has been established
+- **Killed** (red): Process has been terminated
+- **Unknown** (gray): Status cannot be determined (should not occur normally)
 
 ## Requirements
 

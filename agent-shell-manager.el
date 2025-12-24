@@ -195,6 +195,38 @@ Returns one of: waiting, ready, working, killed, or unknown."
             "active"
           "none")))))
 
+(defun agent-shell-manager--get-combined-status (buffer)
+  "Get combined status for BUFFER that merges operational and session state.
+Returns a user-friendly status string with appropriate face."
+  (with-current-buffer buffer
+    (let ((status (agent-shell-manager--get-status buffer))
+          (session (agent-shell-manager--get-session-status buffer)))
+      (cond
+       ;; Killed - highest priority
+       ((string= status "killed")
+        (propertize "Killed" 'face 'error))
+       ;; Initializing without session
+       ((and (string= status "initializing")
+             (string= session "none"))
+        (propertize "Starting..." 'face 'font-lock-comment-face))
+       ;; Ready but no session (edge case)
+       ((and (string= status "ready")
+             (string= session "none"))
+        (propertize "No Session" 'face 'font-lock-comment-face))
+       ;; Ready with active session
+       ((and (string= status "ready")
+             (string= session "active"))
+        (propertize "Ready" 'face 'success))
+       ;; Working
+       ((string= status "working")
+        (propertize "Working" 'face 'warning))
+       ;; Waiting for user input/permission
+       ((string= status "waiting")
+        (propertize "Waiting" 'face 'font-lock-keyword-face))
+       ;; Unknown/fallback
+       (t
+        (propertize "Unknown" 'face 'font-lock-comment-face))))))
+
 (defun agent-shell-manager--get-session-mode (buffer)
   "Get the current session mode for BUFFER."
   (with-current-buffer buffer
@@ -234,13 +266,13 @@ Returns one of: waiting, ready, working, killed, or unknown."
          (entries (mapcar
                    (lambda (buffer)
                      (let* ((buffer-name (buffer-name buffer))
-                            (status (agent-shell-manager--get-status buffer))
+                            (status (agent-shell-manager--get-combined-status buffer))
                             (session (agent-shell-manager--get-session-status buffer))
                             (mode (agent-shell-manager--get-session-mode buffer)))
                        (list buffer
                              (vector
                               buffer-name
-                              (propertize status 'face (agent-shell-manager--status-face status))
+                              status
                               session
                               mode))))
                    buffers)))
@@ -254,10 +286,10 @@ Returns one of: waiting, ready, working, killed, or unknown."
               (setq status-b (substring-no-properties status-b))
               (cond
                ;; Both killed or both not killed - maintain original order (stable)
-               ((and (string= status-a "killed") (string= status-b "killed")) nil)
-               ((and (not (string= status-a "killed")) (not (string= status-b "killed"))) nil)
+               ((and (string= status-a "Killed") (string= status-b "Killed")) nil)
+               ((and (not (string= status-a "Killed")) (not (string= status-b "Killed"))) nil)
                ;; a is killed, b is not - a goes after b
-               ((string= status-a "killed") nil)
+               ((string= status-a "Killed") nil)
                ;; b is killed, a is not - a goes before b
                (t t)))))))
 
@@ -468,7 +500,7 @@ The position of the window is controlled by `agent-shell-manager-side'."
                                                    '(t . nil)
                                                  '(nil . t)))
                              (window-parameters .
-                              ((no-delete-other-windows . t))))))
+                                                ((no-delete-other-windows . t))))))
                       ;; Use regular window, let user's config control display
                       (display-buffer buffer))))
         (setq agent-shell-manager--global-buffer buffer)
