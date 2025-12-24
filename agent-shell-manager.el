@@ -101,10 +101,11 @@ Key bindings:
 
 \\{agent-shell-manager-mode-map}"
   (setq tabulated-list-format
-        [("Buffer" 60 t)
+        [("Buffer" 40 t)
          ("Status" 15 t)
          ("Session" 10 t)
-         ("Mode" 15 t)])
+         ("Mode" 15 t)
+         ("Model" 20 t)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
@@ -248,6 +249,20 @@ Returns a user-friendly status string with appropriate face."
           (match-string 1 buffer-name)
         "-"))))
 
+(defun agent-shell-manager--get-model-id (buffer)
+  "Get the current model ID for BUFFER."
+  (with-current-buffer buffer
+    (if (and (boundp 'agent-shell--state)
+             (map-nested-elt agent-shell--state '(:session :model-id)))
+        (let* ((model-id (map-nested-elt agent-shell--state '(:session :model-id)))
+               (models (map-nested-elt agent-shell--state '(:session :models)))
+               (model-info (seq-find (lambda (model)
+                                       (string= (map-elt model :model-id) model-id))
+                                     models)))
+          (or (and model-info (map-elt model-info :name))
+              model-id))
+      "-")))
+
 (defun agent-shell-manager--status-face (status)
   "Return face for STATUS string."
   (cond
@@ -268,13 +283,15 @@ Returns a user-friendly status string with appropriate face."
                      (let* ((buffer-name (buffer-name buffer))
                             (status (agent-shell-manager--get-combined-status buffer))
                             (session (agent-shell-manager--get-session-status buffer))
-                            (mode (agent-shell-manager--get-session-mode buffer)))
+                            (mode (agent-shell-manager--get-session-mode buffer))
+                            (model (agent-shell-manager--get-model-id buffer)))
                        (list buffer
                              (vector
                               buffer-name
                               status
                               session
-                              mode))))
+                              mode
+                              model))))
                    buffers)))
     ;; Sort entries: killed processes go to the bottom
     (sort entries
