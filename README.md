@@ -9,9 +9,9 @@
 - **Tabulated List View**: View all agent-shell buffers in an organized table showing:
   - Folder/directory path
   - Current status (Ready, Working, Waiting, Starting..., No Session, Killed, Unknown)
-  - Session status (active/none)
   - Current session mode
   - Active model (e.g., "claude-sonnet-4", "gpt-4")
+  - Pending permission requests count (highlighted in yellow when > 0)
   
 - **Real-time Monitoring**: Auto-refreshes every 2 seconds to show current agent status
 
