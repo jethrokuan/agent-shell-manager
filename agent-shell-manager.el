@@ -32,7 +32,7 @@
 ;;   r     - Restart agent-shell
 ;;   d     - Delete all killed buffers
 ;;   m     - Set session mode
-;;   M     - Cycle session mode
+;;   M     - Set session model
 ;;   C-c C-c - Interrupt agent
 ;;   t     - View traffic logs
 ;;   l     - Toggle logging
@@ -69,7 +69,7 @@ is controlled by the user's display-buffer-alist."
     (define-key map (kbd "r") #'agent-shell-manager-restart)
     (define-key map (kbd "d") #'agent-shell-manager-delete-killed)
     (define-key map (kbd "m") #'agent-shell-manager-set-mode)
-    (define-key map (kbd "M") #'agent-shell-manager-cycle-mode)
+    (define-key map (kbd "M") #'agent-shell-manager-set-model)
     (define-key map (kbd "C-c C-c") #'agent-shell-manager-interrupt)
     (define-key map (kbd "t") #'agent-shell-manager-view-traffic)
     (define-key map (kbd "l") #'agent-shell-manager-toggle-logging)
@@ -93,7 +93,7 @@ Key bindings:
 \\[agent-shell-manager-restart] - Restart the agent-shell at point
 \\[agent-shell-manager-delete-killed] - Delete all killed agent-shell buffers
 \\[agent-shell-manager-set-mode] - Set session mode for agent at point
-\\[agent-shell-manager-cycle-mode] - Cycle session mode for agent at point
+\\[agent-shell-manager-set-model] - Set session model for agent at point
 \\[agent-shell-manager-interrupt] - Interrupt the agent at point
 \\[agent-shell-manager-view-traffic] - View traffic logs for agent at point
 \\[agent-shell-manager-toggle-logging] - Toggle ACP logging
@@ -101,10 +101,11 @@ Key bindings:
 
 \\{agent-shell-manager-mode-map}"
   (setq tabulated-list-format
-        [("Buffer" 60 t)
+        [("Buffer" 40 t)
          ("Status" 15 t)
          ("Session" 10 t)
-         ("Mode" 15 t)])
+         ("Mode" 15 t)
+         ("Model" 20 t)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
@@ -248,6 +249,20 @@ Returns a user-friendly status string with appropriate face."
           (match-string 1 buffer-name)
         "-"))))
 
+(defun agent-shell-manager--get-model-id (buffer)
+  "Get the current model ID for BUFFER."
+  (with-current-buffer buffer
+    (if (and (boundp 'agent-shell--state)
+             (map-nested-elt agent-shell--state '(:session :model-id)))
+        (let* ((model-id (map-nested-elt agent-shell--state '(:session :model-id)))
+               (models (map-nested-elt agent-shell--state '(:session :models)))
+               (model-info (seq-find (lambda (model)
+                                       (string= (map-elt model :model-id) model-id))
+                                     models)))
+          (or (and model-info (map-elt model-info :name))
+              model-id))
+      "-")))
+
 (defun agent-shell-manager--status-face (status)
   "Return face for STATUS string."
   (cond
@@ -268,13 +283,15 @@ Returns a user-friendly status string with appropriate face."
                      (let* ((buffer-name (buffer-name buffer))
                             (status (agent-shell-manager--get-combined-status buffer))
                             (session (agent-shell-manager--get-session-status buffer))
-                            (mode (agent-shell-manager--get-session-mode buffer)))
+                            (mode (agent-shell-manager--get-session-mode buffer))
+                            (model (agent-shell-manager--get-model-id buffer)))
                        (list buffer
                              (vector
                               buffer-name
                               status
                               session
-                              mode))))
+                              mode
+                              model))))
                    buffers)))
     ;; Sort entries: killed processes go to the bottom
     (sort entries
@@ -430,8 +447,8 @@ Kills the current process and starts a new one with the same config if possible.
       (agent-shell-set-session-mode))
     (agent-shell-manager-refresh)))
 
-(defun agent-shell-manager-cycle-mode ()
-  "Cycle session mode for the agent-shell at point."
+(defun agent-shell-manager-set-model ()
+  "Set session model for the agent-shell at point."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
@@ -439,7 +456,7 @@ Kills the current process and starts a new one with the same config if possible.
     (with-current-buffer buffer
       (unless (derived-mode-p 'agent-shell-mode)
         (user-error "Not an agent-shell buffer"))
-      (agent-shell-cycle-session-mode))
+      (agent-shell-set-session-model))
     (agent-shell-manager-refresh)))
 
 (defun agent-shell-manager-interrupt ()

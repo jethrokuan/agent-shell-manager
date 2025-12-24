@@ -8,9 +8,10 @@
 
 - **Tabulated List View**: View all agent-shell buffers in an organized table showing:
   - Folder/directory path
-  - Current status (ready, working, waiting, initializing, killed)
+  - Current status (Ready, Working, Waiting, Starting..., No Session, Killed, Unknown)
   - Session status (active/none)
   - Current session mode
+  - Active model (e.g., "claude-sonnet-4", "gpt-4")
   
 - **Real-time Monitoring**: Auto-refreshes every 2 seconds to show current agent status
 
@@ -68,7 +69,7 @@ Once the manager buffer is open, you can use these keys:
 | `r`         | Restart agent-shell                       |
 | `d`         | Delete all killed buffers                 |
 | `m`         | Set session mode                          |
-| `M`         | Cycle session mode                        |
+| `M`         | Set session model                         |
 | `C-c C-c`   | Interrupt agent                           |
 | `t`         | View traffic logs                         |
 | `l`         | Toggle logging                            |
