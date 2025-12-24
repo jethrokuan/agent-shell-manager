@@ -103,9 +103,9 @@ Key bindings:
   (setq tabulated-list-format
         [("Buffer" 40 t)
          ("Status" 15 t)
-         ("Session" 10 t)
          ("Mode" 15 t)
-         ("Model" 20 t)])
+         ("Model" 20 t)
+         ("Pending Permissions" 20 t)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
@@ -263,6 +263,25 @@ Returns a user-friendly status string with appropriate face."
               model-id))
       "-")))
 
+(defun agent-shell-manager--count-pending-permissions (buffer)
+  "Count the number of pending permission requests for BUFFER.
+Returns a propertized string with yellow/warning face for non-zero counts."
+  (with-current-buffer buffer
+    (if (and (boundp 'agent-shell--state)
+             (map-elt agent-shell--state :tool-calls))
+        (let ((count 0))
+          (map-do
+           (lambda (_tool-call-id tool-call-data)
+             (when (map-elt tool-call-data :permission-request-id)
+               (setq count (1+ count))))
+           (map-elt agent-shell--state :tool-calls))
+          (if (> count 0)
+              (propertize (number-to-string count)
+                          'face 'warning
+                          'font-lock-face 'warning)
+            "-"))
+      "-")))
+
 (defun agent-shell-manager--status-face (status)
   "Return face for STATUS string."
   (cond
@@ -282,16 +301,16 @@ Returns a user-friendly status string with appropriate face."
                    (lambda (buffer)
                      (let* ((buffer-name (buffer-name buffer))
                             (status (agent-shell-manager--get-combined-status buffer))
-                            (session (agent-shell-manager--get-session-status buffer))
                             (mode (agent-shell-manager--get-session-mode buffer))
-                            (model (agent-shell-manager--get-model-id buffer)))
+                            (model (agent-shell-manager--get-model-id buffer))
+                            (perms (agent-shell-manager--count-pending-permissions buffer)))
                        (list buffer
                              (vector
                               buffer-name
                               status
-                              session
                               mode
-                              model))))
+                              model
+                              perms))))
                    buffers)))
     ;; Sort entries: killed processes go to the bottom
     (sort entries
