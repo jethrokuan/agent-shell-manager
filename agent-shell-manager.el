@@ -44,13 +44,13 @@
 (require 'tabulated-list)
 
 (defgroup agent-shell-manager nil
-  "Buffer manager for agent-shell."
+  "Buffer manager for `agent-shell'."
   :group 'agent-shell)
 
 (defcustom agent-shell-manager-side 'bottom
-  "Side of the frame to display the agent-shell manager.
+  "Side of the frame to display the `agent-shell' manager.
 Can be 'left, 'right, 'top, 'bottom, or nil.  When nil, buffer display
-is controlled by the user's display-buffer-alist."
+is controlled by the user's `display-buffer-alist'."
   :type '(choice (const :tag "Left" left)
           (const :tag "Right" right)
           (const :tag "Top" top)
@@ -80,18 +80,18 @@ is controlled by the user's display-buffer-alist."
   "Timer for auto-refreshing the buffer list.")
 
 (defvar agent-shell-manager--global-buffer nil
-  "The global manager buffer for agent-shell buffer list.")
+  "The global manager buffer for `agent-shell' buffer list.")
 
 (define-derived-mode agent-shell-manager-mode tabulated-list-mode "Agent-Shell-Buffers"
-  "Major mode for listing agent-shell buffers.
+  "Major mode for listing `agent-shell' buffers.
 
 Key bindings:
-\\[agent-shell-manager-goto] - Switch to agent-shell buffer at point
+\\[agent-shell-manager-goto] - Switch to `agent-shell' buffer at point
 \\[agent-shell-manager-refresh] - Refresh the buffer list
-\\[agent-shell-manager-kill] - Kill the agent-shell process at point
-\\[agent-shell-manager-new] - Create a new agent-shell
-\\[agent-shell-manager-restart] - Restart the agent-shell at point
-\\[agent-shell-manager-delete-killed] - Delete all killed agent-shell buffers
+\\[agent-shell-manager-kill] - Kill the `agent-shell' process at point
+\\[agent-shell-manager-new] - Create a new `agent-shell'
+\\[agent-shell-manager-restart] - Restart the `agent-shell' at point
+\\[agent-shell-manager-delete-killed] - Delete all killed `agent-shell' buffers
 \\[agent-shell-manager-set-mode] - Set session mode for agent at point
 \\[agent-shell-manager-set-model] - Set session model for agent at point
 \\[agent-shell-manager-interrupt] - Interrupt the agent at point
@@ -109,11 +109,11 @@ Key bindings:
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
-  
+
   ;; Set up auto-refresh timer (refresh every 2 seconds)
   (setq agent-shell-manager--refresh-timer
         (run-with-timer 2 2 #'agent-shell-manager-refresh))
-  
+
   ;; Cancel timer when buffer is killed
   (add-hook 'kill-buffer-hook
             (lambda ()
@@ -123,7 +123,7 @@ Key bindings:
             nil t))
 
 (defun agent-shell-manager--get-status (buffer)
-  "Get the current status of agent-shell BUFFER.
+  "Get the current status of `agent-shell' BUFFER.
 Returns one of: waiting, ready, working, killed, or unknown."
   (with-current-buffer buffer
     (if (not (boundp 'agent-shell--state))
@@ -339,9 +339,9 @@ Returns a propertized string with yellow/warning face for non-zero counts."
       (tabulated-list-print t))))
 
 (defun agent-shell-manager-goto ()
-  "Go to the agent-shell buffer at point without closing the manager.
+  "Go to the `agent-shell' buffer at point without closing the manager.
 If the buffer is already visible, switch to it.
-Otherwise, if another agent-shell window is open, reuse it."
+Otherwise, if another `agent-shell' window is open, reuse it."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (if (buffer-live-p buffer)
@@ -351,7 +351,7 @@ Otherwise, if another agent-shell window is open, reuse it."
            ;; If the buffer is already visible, just switch to it
            (buffer-window
             (select-window buffer-window))
-           
+
            ;; Otherwise, find an existing agent-shell window to reuse
            (t
             (walk-windows
@@ -362,7 +362,7 @@ Otherwise, if another agent-shell window is open, reuse it."
                             (derived-mode-p 'agent-shell-mode)))
                  (setq agent-shell-window win)))
              nil t)
-            
+
             (if agent-shell-window
                 ;; Reuse the existing agent-shell window
                 (progn
@@ -373,7 +373,7 @@ Otherwise, if another agent-shell window is open, reuse it."
       (user-error "Buffer no longer exists"))))
 
 (defun agent-shell-manager-kill ()
-  "Kill the agent-shell process at point."
+  "Kill the `agent-shell' process at point."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
@@ -391,7 +391,7 @@ Otherwise, if another agent-shell window is open, reuse it."
       (run-with-timer 0.1 nil #'agent-shell-manager-refresh))))
 
 (defun agent-shell-manager-new ()
-  "Create a new agent-shell."
+  "Create a new `agent-shell'."
   (interactive)
   (agent-shell t)
   (agent-shell-manager-refresh))
@@ -408,7 +408,7 @@ Returns nil if config cannot be determined."
                   agent-shell-agent-configs)))))
 
 (defun agent-shell-manager-restart ()
-  "Restart the agent-shell at point.
+  "Restart the `agent-shell' at point.
 Kills the current process and starts a new one with the same config if possible."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
@@ -435,7 +435,7 @@ Kills the current process and starts a new one with the same config if possible.
         (message "Restarted %s" buffer-name)))))
 
 (defun agent-shell-manager-delete-killed ()
-  "Delete all killed agent-shell buffers from the list."
+  "Delete all killed `agent-shell' buffers from the list."
   (interactive)
   (let ((killed-buffers (seq-filter
                          (lambda (buffer)
@@ -455,7 +455,7 @@ Kills the current process and starts a new one with the same config if possible.
                  (if (= (length killed-buffers) 1) "" "s"))))))
 
 (defun agent-shell-manager-set-mode ()
-  "Set session mode for the agent-shell at point."
+  "Set session mode for the `agent-shell' at point."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
@@ -467,7 +467,7 @@ Kills the current process and starts a new one with the same config if possible.
     (agent-shell-manager-refresh)))
 
 (defun agent-shell-manager-set-model ()
-  "Set session model for the agent-shell at point."
+  "Set session model for the `agent-shell' at point."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
@@ -479,7 +479,7 @@ Kills the current process and starts a new one with the same config if possible.
     (agent-shell-manager-refresh)))
 
 (defun agent-shell-manager-interrupt ()
-  "Interrupt the agent-shell at point."
+  "Interrupt the `agent-shell' at point."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
@@ -491,7 +491,7 @@ Kills the current process and starts a new one with the same config if possible.
     (agent-shell-manager-refresh)))
 
 (defun agent-shell-manager-view-traffic ()
-  "View traffic logs for the agent-shell at point."
+  "View traffic logs for the `agent-shell' at point."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
@@ -502,14 +502,14 @@ Kills the current process and starts a new one with the same config if possible.
       (agent-shell-view-traffic))))
 
 (defun agent-shell-manager-toggle-logging ()
-  "Toggle logging for agent-shell."
+  "Toggle logging for `agent-shell'."
   (interactive)
   (agent-shell-toggle-logging)
   (agent-shell-manager-refresh))
 
 ;;;###autoload
 (defun agent-shell-manager-toggle ()
-  "Toggle the agent-shell buffer list window.
+  "Toggle the `agent-shell' buffer list window.
 Shows buffer name, agent type, status (ready/waiting/working), session info, and mode.
 The position of the window is controlled by `agent-shell-manager-side'."
   (interactive)
