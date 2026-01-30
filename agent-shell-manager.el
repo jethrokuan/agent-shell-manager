@@ -272,7 +272,9 @@ Returns a propertized string with yellow/warning face for non-zero counts."
         (let ((count 0))
           (map-do
            (lambda (_tool-call-id tool-call-data)
-             (when (map-elt tool-call-data :permission-request-id)
+             (when (and (map-elt tool-call-data :permission-request-id)
+                        (let ((status (map-elt tool-call-data :status)))
+                          (equal status "pending")))
                (setq count (1+ count))))
            (map-elt agent-shell--state :tool-calls))
           (if (> count 0)
