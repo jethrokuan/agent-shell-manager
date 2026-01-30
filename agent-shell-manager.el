@@ -58,6 +58,13 @@ is controlled by the user's `display-buffer-alist'."
           (const :tag "User-controlled" nil))
   :group 'agent-shell-manager)
 
+(defcustom agent-shell-manager-transient nil
+  "When non-nil, automatically hide the manager window after actions.
+This includes switching to a shell buffer with RET.  When enabled,
+the manager window can also be closed by `delete-other-windows' (C-x 1)."
+  :type 'boolean
+  :group 'agent-shell-manager)
+
 (defvar agent-shell-manager-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
@@ -338,8 +345,17 @@ Returns a propertized string with yellow/warning face for non-zero counts."
       (setq tabulated-list-entries (agent-shell-manager--entries))
       (tabulated-list-print t))))
 
+(defun agent-shell-manager--hide-window ()
+  "Hide the manager window if `agent-shell-manager-transient' is non-nil."
+  (when agent-shell-manager-transient
+    (when-let* ((buffer agent-shell-manager--global-buffer)
+                (window (and (buffer-live-p buffer)
+                             (get-buffer-window buffer))))
+      (delete-window window))))
+
 (defun agent-shell-manager-goto ()
-  "Go to the `agent-shell' buffer at point without closing the manager.
+  "Go to the `agent-shell' buffer at point.
+If `agent-shell-manager-transient' is non-nil, hide the manager window.
 If the buffer is already visible, switch to it.
 Otherwise, if another `agent-shell' window is open, reuse it."
   (interactive)
@@ -369,7 +385,8 @@ Otherwise, if another `agent-shell' window is open, reuse it."
                   (set-window-buffer agent-shell-window buffer)
                   (select-window agent-shell-window))
               ;; No existing agent-shell window, use default behavior
-              (agent-shell--display-buffer buffer)))))
+              (agent-shell--display-buffer buffer))))
+          (agent-shell-manager--hide-window))
       (user-error "Buffer no longer exists"))))
 
 (defun agent-shell-manager-kill ()
@@ -394,7 +411,9 @@ Otherwise, if another `agent-shell' window is open, reuse it."
   "Create a new `agent-shell'."
   (interactive)
   (agent-shell t)
-  (agent-shell-manager-refresh))
+  (if agent-shell-manager-transient
+      (agent-shell-manager--hide-window)
+    (agent-shell-manager-refresh)))
 
 (defun agent-shell-manager--get-buffer-config (buffer)
   "Try to determine the config used for BUFFER.
@@ -511,7 +530,9 @@ Kills the current process and starts a new one with the same config if possible.
 (defun agent-shell-manager-toggle ()
   "Toggle the `agent-shell' buffer list window.
 Shows buffer name, agent type, status (ready/waiting/working), session info, and mode.
-The position of the window is controlled by `agent-shell-manager-side'."
+The position of the window is controlled by `agent-shell-manager-side'.
+When `agent-shell-manager-transient' is non-nil, the window can be closed
+by `delete-other-windows' (C-x 1)."
   (interactive)
   (let* ((buffer (get-buffer-create "*Agent-Shell Buffers*"))
          (window (get-buffer-window buffer)))
@@ -535,8 +556,9 @@ The position of the window is controlled by `agent-shell-manager-side'."
                                                     '(left right))
                                                    '(t . nil)
                                                  '(nil . t)))
-                             (window-parameters .
-                                                ((no-delete-other-windows . t))))))
+                             ,@(unless agent-shell-manager-transient
+                                 '((window-parameters .
+                                    ((no-delete-other-windows . t))))))))
                       ;; Use regular window, let user's config control display
                       (display-buffer buffer))))
         (setq agent-shell-manager--global-buffer buffer)
