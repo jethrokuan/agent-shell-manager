@@ -111,8 +111,9 @@ Key bindings:
         [("Buffer" 40 t)
          ("Status" 15 t)
          ("Mode" 15 t)
-         ("Model" 20 t)
-         ("Pending Permissions" 20 t)])
+         ("Model" 21 t)
+         ("Pending Permissions" 20 t)
+         ("Path" 20 t)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
@@ -301,6 +302,11 @@ Returns a propertized string with yellow/warning face for non-zero counts."
    ((string= status "killed") 'error)
    (t 'default)))
 
+(defun agent-shell-manager--get-cwd (buffer)
+  "Get the current session directory for BUFFER."
+  (with-current-buffer buffer
+    default-directory))
+
 (defun agent-shell-manager--entries ()
   "Return list of entries for tabulated-list."
   (let* ((buffers (agent-shell-buffers))
@@ -312,14 +318,16 @@ Returns a propertized string with yellow/warning face for non-zero counts."
                             (status (agent-shell-manager--get-combined-status buffer))
                             (mode (agent-shell-manager--get-session-mode buffer))
                             (model (agent-shell-manager--get-model-id buffer))
-                            (perms (agent-shell-manager--count-pending-permissions buffer)))
+                            (perms (agent-shell-manager--count-pending-permissions buffer))
+                            (path (abbreviate-file-name (agent-shell-manager--get-cwd buffer))))
                        (list buffer
                              (vector
                               buffer-name
                               status
                               mode
                               model
-                              perms))))
+                              perms
+                              path))))
                    buffers)))
     ;; Sort entries: killed processes go to the bottom
     (sort entries
