@@ -117,6 +117,9 @@ Key bindings:
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
 
+  (when agent-shell-manager--refresh-timer
+    (cancel-timer agent-shell-manager--refresh-timer))
+
   ;; Set up auto-refresh timer (refresh every 2 seconds)
   (setq agent-shell-manager--refresh-timer
         (run-with-timer 2 2 #'agent-shell-manager-refresh))
