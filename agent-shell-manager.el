@@ -38,6 +38,7 @@
 ;;   t     - View traffic logs
 ;;   l     - Toggle logging
 ;;   a     - Set annotation
+;;   n     - Toggle ready notifications
 ;;   q     - Quit manager window
 
 ;;; Code:
@@ -92,6 +93,7 @@ is not the active application."
     (define-key map (kbd "t") #'agent-shell-manager-view-traffic)
     (define-key map (kbd "l") #'agent-shell-manager-toggle-logging)
     (define-key map (kbd "a") #'agent-shell-manager-set-annotation)
+    (define-key map (kbd "n") #'agent-shell-manager-toggle-ready-status-notifications)
     map)
   "Keymap for `agent-shell-manager-mode'.")
 
@@ -123,6 +125,7 @@ Key bindings:
 \\[agent-shell-manager-view-traffic] - View traffic logs for agent at point
 \\[agent-shell-manager-toggle-logging] - Toggle ACP logging
 \\[agent-shell-manager-set-annotation] - Set annotation for agent at point
+\\[agent-shell-manager-toggle-ready-status-notifications] - Toggle ready notifications
 \\[quit-window] - Quit the manager window
 
 \\{agent-shell-manager-mode-map}"
@@ -677,6 +680,16 @@ Kills the current process and starts a new one with the same config if possible.
   (interactive)
   (agent-shell-toggle-logging)
   (agent-shell-manager-refresh))
+
+(defun agent-shell-manager-toggle-ready-status-notifications ()
+  "Toggle `agent-shell-manager-ready-status-notifications'."
+  (interactive)
+  (setq agent-shell-manager-ready-status-notifications
+        (not agent-shell-manager-ready-status-notifications))
+  (message "Ready status notifications %s"
+           (if agent-shell-manager-ready-status-notifications
+               "enabled"
+             "disabled")))
 
 ;;;###autoload
 (defun agent-shell-manager-toggle ()

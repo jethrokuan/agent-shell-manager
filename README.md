@@ -81,7 +81,9 @@ Once the manager buffer is open, you can use these keys:
 | `C-c C-c`   | Interrupt agent                           |
 | `t`         | View traffic logs                         |
 | `l`         | Toggle logging                            |
+
 | `a`         | Set annotation                            |
+| `n`         | Toggle ready notifications                |
 | `q`         | Quit manager window                       |
 
 ## Configuration
@@ -96,6 +98,12 @@ Notifications are emitted only when either:
 
 ```elisp
 (setq agent-shell-manager-ready-status-notifications t)
+```
+
+You can also toggle this interactively with:
+
+```elisp
+M-x agent-shell-manager-toggle-ready-status-notifications
 ```
 
 ### Window Position
