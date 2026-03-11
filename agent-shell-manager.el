@@ -113,7 +113,8 @@ Key bindings:
          ("Mode" 15 t)
          ("Model" 21 t)
          ("Pending Permissions" 20 t)
-         ("Path" 20 t)])
+         ("Path" 20 t)
+         ("Last /command" 20 t)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
@@ -310,6 +311,26 @@ Returns a propertized string with yellow/warning face for non-zero counts."
   (with-current-buffer buffer
     default-directory))
 
+(defun agent-shell-manager--get-last-command (buffer)
+  "Get the last /command used in BUFFER.
+Returns the most recent entry from `comint-input-ring' that starts with /.
+Returns \"-\" if no slash command has been used yet."
+  (with-current-buffer buffer
+    (if (and (boundp 'comint-input-ring)
+             (ring-p comint-input-ring))
+        (let ((index 0)
+              (ring-size (ring-length comint-input-ring))
+              (last-command nil))
+          (while (and (< index ring-size)
+                      (not last-command))
+            (let ((input (ring-ref comint-input-ring index)))
+              (when (and (stringp input)
+                         (string-match "^\\s-*\\(/[^[:space:]]+\\)" input))
+                (setq last-command (match-string 1 input))))
+            (setq index (1+ index)))
+          (or last-command "-"))
+      "-")))
+
 (defun agent-shell-manager--entries ()
   "Return list of entries for tabulated-list."
   (let* ((buffers (agent-shell-buffers))
@@ -322,7 +343,8 @@ Returns a propertized string with yellow/warning face for non-zero counts."
                             (mode (agent-shell-manager--get-session-mode buffer))
                             (model (agent-shell-manager--get-model-id buffer))
                             (perms (agent-shell-manager--count-pending-permissions buffer))
-                            (path (abbreviate-file-name (agent-shell-manager--get-cwd buffer))))
+                            (path (abbreviate-file-name (agent-shell-manager--get-cwd buffer)))
+                            (last-command (agent-shell-manager--get-last-command buffer)))
                        (list buffer
                              (vector
                               buffer-name
@@ -330,7 +352,8 @@ Returns a propertized string with yellow/warning face for non-zero counts."
                               mode
                               model
                               perms
-                              path))))
+                              path
+                              last-command))))
                    buffers)))
     ;; Sort entries: killed processes go to the bottom
     (sort entries

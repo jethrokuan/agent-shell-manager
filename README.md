@@ -12,6 +12,7 @@
   - Current session mode
   - Active model (e.g., "claude-sonnet-4", "gpt-4")
   - Pending permission requests count (highlighted in yellow when > 0)
+  - Last `/command` used in each shell (for example, `/help` or `/compact`)
   
 - **Real-time Monitoring**: Auto-refreshes every 2 seconds to show current agent status
 
