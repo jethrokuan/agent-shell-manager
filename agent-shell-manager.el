@@ -109,6 +109,9 @@ is not the active application."
 (defvar agent-shell-manager--status-history (make-hash-table :test #'eq)
   "Hash table tracking last known status per agent-shell buffer.")
 
+(defvar agent-shell-manager--notification-timer nil
+  "Timer for polling shell statuses and emitting ready notifications.")
+
 (define-derived-mode agent-shell-manager-mode tabulated-list-mode "Agent-Shell-Buffers"
   "Major mode for listing `agent-shell' buffers.
 
@@ -137,7 +140,7 @@ Key bindings:
          ("Pending Permissions" 20 t)
          ("Annotation" 25 t)
          ("Path" 20 t)
-         ("Last /command" 20 t)])
+         ("Last command" 20 t)])
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Buffer" nil))
   (tabulated-list-init-header)
@@ -233,19 +236,47 @@ If focus state can't be determined, returns non-nil."
 
 (defun agent-shell-manager--send-macos-notification (title message)
   "Send macOS notification with TITLE and MESSAGE."
-  (when-let ((osascript (and (eq system-type 'darwin)
-                             (executable-find "osascript"))))
-    (start-process
-     "agent-shell-manager-notify" nil
-     osascript "-e"
-     (format "display notification %S with title %S"
-             message title))))
+  (when (eq system-type 'darwin)
+    (let* ((script (format "display notification %S with title %S"
+                           message title))
+           (osascript (executable-find "osascript")))
+      (cond
+       ((fboundp 'do-applescript)
+        (condition-case err
+            (do-applescript script)
+          (error
+           (message "agent-shell-manager notification failed: %s"
+                    (error-message-string err)))))
+       ((fboundp 'ns-do-applescript)
+        (condition-case err
+            (ns-do-applescript script)
+          (error
+           (message "agent-shell-manager notification failed: %s"
+                    (error-message-string err)))))
+       (osascript
+        (with-temp-buffer
+          (unless (zerop (call-process osascript nil t nil "-e" script))
+            (message "agent-shell-manager notification failed: %s"
+                     (string-trim (buffer-string))))))
+       (t
+        (message "agent-shell-manager notification failed: no AppleScript backend found"))))))
 
 (defun agent-shell-manager--should-notify-ready-transition-p ()
   "Return non-nil when ready notifications should be emitted now."
   (and agent-shell-manager-ready-status-notifications
        (or (not (agent-shell-manager--manager-visible-p))
            (not (agent-shell-manager--emacs-active-p)))))
+
+(defun agent-shell-manager--notification-label (buffer)
+  "Return notification label for BUFFER.
+
+Includes annotation when present to help identify shell scope."
+  (with-current-buffer buffer
+    (let ((annotation (and (stringp agent-shell-manager--annotation)
+                           (string-trim agent-shell-manager--annotation))))
+      (if (and annotation (not (string-empty-p annotation)))
+          (format "%s (%s)" (buffer-name buffer) annotation)
+        (buffer-name buffer)))))
 
 (defun agent-shell-manager--maybe-notify-ready-transition (buffer current-status)
   "Notify if BUFFER transitioned from working to ready.
@@ -257,7 +288,8 @@ CURRENT-STATUS should be the raw status string."
                (agent-shell-manager--should-notify-ready-transition-p))
       (agent-shell-manager--send-macos-notification
        "Agent Ready"
-       (format "%s is ready" (buffer-name buffer))))))
+       (format "%s is ready"
+               (agent-shell-manager--notification-label buffer))))))
 
 (defun agent-shell-manager--prune-status-history (buffers)
   "Drop status cache entries for buffers not present in BUFFERS list."
@@ -266,6 +298,30 @@ CURRENT-STATUS should be the raw status string."
      (unless (memq buffer buffers)
        (remhash buffer agent-shell-manager--status-history)))
    agent-shell-manager--status-history))
+
+(defun agent-shell-manager--poll-ready-transitions ()
+  "Poll shell statuses and emit notifications for ready transitions."
+  (let* ((buffers (agent-shell-buffers))
+         (buffers (if (listp buffers) buffers (list buffers)))
+         (buffers (seq-filter #'buffer-live-p buffers)))
+    (agent-shell-manager--prune-status-history buffers)
+    (dolist (buffer buffers)
+      (let ((status (agent-shell-manager--get-status buffer)))
+        (agent-shell-manager--maybe-notify-ready-transition buffer status)))))
+
+(defun agent-shell-manager--ensure-notification-timer ()
+  "Ensure status polling timer for notifications is running."
+  (unless (and agent-shell-manager--notification-timer
+               (timerp agent-shell-manager--notification-timer))
+    (setq agent-shell-manager--notification-timer
+          (run-with-timer 1 1 #'agent-shell-manager--poll-ready-transitions))))
+
+(defun agent-shell-manager--stop-notification-timer ()
+  "Stop status polling timer for notifications."
+  (when (and agent-shell-manager--notification-timer
+             (timerp agent-shell-manager--notification-timer))
+    (cancel-timer agent-shell-manager--notification-timer)
+    (setq agent-shell-manager--notification-timer nil)))
 
 (defun agent-shell-manager--get-buffer-name (buffer)
   "Get the buffer name for BUFFER."
@@ -424,25 +480,42 @@ Submit empty input to clear the current annotation."
              (if (string= annotation "") "Cleared" "Updated")
              (buffer-name buffer))))
 
-(defun agent-shell-manager--get-last-command (buffer)
-  "Get the last /command used in BUFFER.
-Returns the most recent entry from `comint-input-ring' that starts with /.
-Returns \"-\" if no slash command has been used yet."
+(defun agent-shell-manager--valid-command-names (buffer)
+  "Return valid slash command names for BUFFER.
+
+Values come from BUFFER's `:available-commands' entries and do not
+include the leading slash."
   (with-current-buffer buffer
-    (if (and (boundp 'comint-input-ring)
-             (ring-p comint-input-ring))
-        (let ((index 0)
-              (ring-size (ring-length comint-input-ring))
-              (last-command nil))
-          (while (and (< index ring-size)
-                      (not last-command))
-            (let ((input (ring-ref comint-input-ring index)))
-              (when (and (stringp input)
-                         (string-match "^\\s-*\\(/[^[:space:]]+\\)" input))
-                (setq last-command (match-string 1 input))))
-            (setq index (1+ index)))
-          (or last-command "-"))
-      "-")))
+    (when (boundp 'agent-shell--state)
+      (mapcar (lambda (command)
+                (map-elt command 'name))
+              (map-elt agent-shell--state :available-commands)))))
+
+(defun agent-shell-manager--get-last-command (buffer)
+  "Get the last valid /command used in BUFFER.
+
+Returns the most recent entry from `comint-input-ring' that matches one
+of BUFFER's currently available slash commands.
+Returns \"-\" if no valid slash command has been used yet."
+  (with-current-buffer buffer
+    (let ((valid-commands (agent-shell-manager--valid-command-names buffer)))
+      (if (and valid-commands
+               (boundp 'comint-input-ring)
+               (ring-p comint-input-ring))
+          (let ((index 0)
+                (ring-size (ring-length comint-input-ring))
+                (last-command nil))
+            (while (and (< index ring-size)
+                        (not last-command))
+              (let ((input (ring-ref comint-input-ring index)))
+                (when (and (stringp input)
+                           (string-match "^\\s-*/\\s-*\\([^[:space:]]+\\)" input))
+                  (let ((command-name (match-string 1 input)))
+                    (when (member command-name valid-commands)
+                      (setq last-command (format "/%s" command-name))))))
+              (setq index (1+ index)))
+            (or last-command "-"))
+        "-"))))
 
 (defun agent-shell-manager--entries ()
   "Return list of entries for tabulated-list."
@@ -686,6 +759,9 @@ Kills the current process and starts a new one with the same config if possible.
   (interactive)
   (setq agent-shell-manager-ready-status-notifications
         (not agent-shell-manager-ready-status-notifications))
+  (if agent-shell-manager-ready-status-notifications
+      (agent-shell-manager--ensure-notification-timer)
+    (agent-shell-manager--stop-notification-timer))
   (message "Ready status notifications %s"
            (if agent-shell-manager-ready-status-notifications
                "enabled"
@@ -733,6 +809,9 @@ by `delete-other-windows' (C-x 1)."
         ;; Make the window dedicated so it can't be used for other buffers
         (set-window-dedicated-p window t)
         (select-window window)))))
+
+(when agent-shell-manager-ready-status-notifications
+  (agent-shell-manager--ensure-notification-timer))
 
 (provide 'agent-shell-manager)
 
