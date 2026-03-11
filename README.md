@@ -14,7 +14,9 @@
   - Pending permission requests count (highlighted in yellow when > 0)
   - Annotation for each shell session (useful when multiple shells share a project)
   - Last `/command` used in each shell (for example, `/help` or `/compact`)
+  - macOS notification when an agent transitions from Working to Ready
   
+
 - **Real-time Monitoring**: Auto-refreshes every 2 seconds to show current agent status
 
 - **Process Management**:
@@ -83,6 +85,18 @@ Once the manager buffer is open, you can use these keys:
 | `q`         | Quit manager window                       |
 
 ## Configuration
+
+### Ready Notifications (macOS)
+
+When enabled, a macOS notification is sent when an agent transitions from **Working** to **Ready**.
+
+Notifications are emitted only when either:
+- the manager window is not currently visible, or
+- Emacs is not the active app.
+
+```elisp
+(setq agent-shell-manager-ready-status-notifications t)
+```
 
 ### Window Position
 

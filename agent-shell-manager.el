@@ -19,6 +19,7 @@
 ;; - Manage session modes
 ;; - View traffic logs for debugging
 ;; - Auto-refresh every 2 seconds
+;; - Optional macOS notifications when agents become ready
 ;; - Killed processes are displayed at the bottom in red
 ;;
 ;; Usage:
@@ -67,6 +68,14 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
   :type 'boolean
   :group 'agent-shell-manager)
 
+(defcustom agent-shell-manager-ready-status-notifications t
+  "When non-nil, send a macOS notification when status changes from working to ready.
+
+Notifications are shown only when the manager is not visible or Emacs
+is not the active application."
+  :type 'boolean
+  :group 'agent-shell-manager)
+
 (defvar agent-shell-manager-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
@@ -94,6 +103,9 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
 
 (defvar-local agent-shell-manager--annotation nil
   "User annotation for this `agent-shell' buffer.")
+
+(defvar agent-shell-manager--status-history (make-hash-table :test #'eq)
+  "Hash table tracking last known status per agent-shell buffer.")
 
 (define-derived-mode agent-shell-manager-mode tabulated-list-mode "Agent-Shell-Buffers"
   "Major mode for listing `agent-shell' buffers.
@@ -200,6 +212,57 @@ Returns one of: waiting, ready, working, killed, or unknown."
          ((not (map-elt state :initialized))
           "initializing")
          (t "unknown"))))))
+
+(defun agent-shell-manager--manager-visible-p ()
+  "Return non-nil when manager buffer is visible in any window."
+  (and agent-shell-manager--global-buffer
+       (buffer-live-p agent-shell-manager--global-buffer)
+       (get-buffer-window agent-shell-manager--global-buffer t)))
+
+(defun agent-shell-manager--emacs-active-p ()
+  "Return non-nil when Emacs appears to be the active app.
+
+If focus state can't be determined, returns non-nil."
+  (if (fboundp 'frame-focus-state)
+      (let ((focus (frame-focus-state)))
+        (not (null focus)))
+    t))
+
+(defun agent-shell-manager--send-macos-notification (title message)
+  "Send macOS notification with TITLE and MESSAGE."
+  (when-let ((osascript (and (eq system-type 'darwin)
+                             (executable-find "osascript"))))
+    (start-process
+     "agent-shell-manager-notify" nil
+     osascript "-e"
+     (format "display notification %S with title %S"
+             message title))))
+
+(defun agent-shell-manager--should-notify-ready-transition-p ()
+  "Return non-nil when ready notifications should be emitted now."
+  (and agent-shell-manager-ready-status-notifications
+       (or (not (agent-shell-manager--manager-visible-p))
+           (not (agent-shell-manager--emacs-active-p)))))
+
+(defun agent-shell-manager--maybe-notify-ready-transition (buffer current-status)
+  "Notify if BUFFER transitioned from working to ready.
+CURRENT-STATUS should be the raw status string."
+  (let ((previous-status (gethash buffer agent-shell-manager--status-history)))
+    (puthash buffer current-status agent-shell-manager--status-history)
+    (when (and (equal previous-status "working")
+               (equal current-status "ready")
+               (agent-shell-manager--should-notify-ready-transition-p))
+      (agent-shell-manager--send-macos-notification
+       "Agent Ready"
+       (format "%s is ready" (buffer-name buffer))))))
+
+(defun agent-shell-manager--prune-status-history (buffers)
+  "Drop status cache entries for buffers not present in BUFFERS list."
+  (maphash
+   (lambda (buffer _status)
+     (unless (memq buffer buffers)
+       (remhash buffer agent-shell-manager--status-history)))
+   agent-shell-manager--status-history))
 
 (defun agent-shell-manager--get-buffer-name (buffer)
   "Get the buffer name for BUFFER."
@@ -383,9 +446,13 @@ Returns \"-\" if no slash command has been used yet."
   (let* ((buffers (agent-shell-buffers))
          (buffers (if (listp buffers) buffers (list buffers)))
          (buffers (seq-filter #'buffer-live-p buffers))
+         (_ignored (agent-shell-manager--prune-status-history buffers))
          (entries (mapcar
                    (lambda (buffer)
                      (let* ((buffer-name (buffer-name buffer))
+                            (raw-status (agent-shell-manager--get-status buffer))
+                            (_notify (agent-shell-manager--maybe-notify-ready-transition
+                                      buffer raw-status))
                             (status (agent-shell-manager--get-combined-status buffer))
                             (mode (agent-shell-manager--get-session-mode buffer))
                             (model (agent-shell-manager--get-model-id buffer))
