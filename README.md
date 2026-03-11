@@ -12,7 +12,8 @@
   - Current session mode
   - Active model (e.g., "claude-sonnet-4", "gpt-4")
   - Pending permission requests count (highlighted in yellow when > 0)
-  
+  - Annotation for each shell session (useful when multiple shells share a project)
+
 - **Real-time Monitoring**: Auto-refreshes every 2 seconds to show current agent status
 
 - **Process Management**:
@@ -25,7 +26,7 @@
   - Set session modes
   - Cycle through available session modes
   - Interrupt running agents
-  
+
 - **Debugging Tools**:
   - View traffic logs for any agent
   - Toggle ACP logging
@@ -56,6 +57,10 @@ M-x agent-shell-manager-toggle
 
 This command toggles the visibility of the agent-shell buffer manager. By default, it appears at the bottom of the frame.
 
+### Annotating Sessions
+
+Use `M-x agent-shell-manager-set-annotation` in either an `agent-shell` buffer or on a row in the manager. Enter a label like `Investigating auth bug`; submit empty text to clear it.
+
 ### Key Bindings
 
 Once the manager buffer is open, you can use these keys:
@@ -73,6 +78,7 @@ Once the manager buffer is open, you can use these keys:
 | `C-c C-c`   | Interrupt agent                           |
 | `t`         | View traffic logs                         |
 | `l`         | Toggle logging                            |
+| `a`         | Set annotation                            |
 | `q`         | Quit manager window                       |
 
 ## Configuration
