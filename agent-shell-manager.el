@@ -36,12 +36,14 @@
 ;;   C-c C-c - Interrupt agent
 ;;   t     - View traffic logs
 ;;   l     - Toggle logging
+;;   a     - Set annotation
 ;;   q     - Quit manager window
 
 ;;; Code:
 
 (require 'agent-shell)
 (require 'tabulated-list)
+(require 'subr-x)
 
 (defgroup agent-shell-manager nil
   "Buffer manager for `agent-shell'."
@@ -80,6 +82,7 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
     (define-key map (kbd "C-c C-c") #'agent-shell-manager-interrupt)
     (define-key map (kbd "t") #'agent-shell-manager-view-traffic)
     (define-key map (kbd "l") #'agent-shell-manager-toggle-logging)
+    (define-key map (kbd "a") #'agent-shell-manager-set-annotation)
     map)
   "Keymap for `agent-shell-manager-mode'.")
 
@@ -88,6 +91,9 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
 
 (defvar agent-shell-manager--global-buffer nil
   "The global manager buffer for `agent-shell' buffer list.")
+
+(defvar-local agent-shell-manager--annotation nil
+  "User annotation for this `agent-shell' buffer.")
 
 (define-derived-mode agent-shell-manager-mode tabulated-list-mode "Agent-Shell-Buffers"
   "Major mode for listing `agent-shell' buffers.
@@ -104,15 +110,17 @@ Key bindings:
 \\[agent-shell-manager-interrupt] - Interrupt the agent at point
 \\[agent-shell-manager-view-traffic] - View traffic logs for agent at point
 \\[agent-shell-manager-toggle-logging] - Toggle ACP logging
+\\[agent-shell-manager-set-annotation] - Set annotation for agent at point
 \\[quit-window] - Quit the manager window
 
 \\{agent-shell-manager-mode-map}"
   (setq tabulated-list-format
-        [("Buffer" 40 t)
+        [("Buffer" 35 t)
          ("Status" 15 t)
          ("Mode" 15 t)
          ("Model" 21 t)
          ("Pending Permissions" 20 t)
+         ("Annotation" 25 t)
          ("Path" 20 t)
          ("Last /command" 20 t)])
   (setq tabulated-list-padding 2)
@@ -311,6 +319,45 @@ Returns a propertized string with yellow/warning face for non-zero counts."
   (with-current-buffer buffer
     default-directory))
 
+(defun agent-shell-manager--get-annotation (buffer)
+  "Get annotation for BUFFER."
+  (with-current-buffer buffer
+    (or agent-shell-manager--annotation "-")))
+
+(defun agent-shell-manager--annotation-target-buffer ()
+  "Get the `agent-shell' buffer target for annotation commands."
+  (cond
+   ((derived-mode-p 'agent-shell-mode)
+    (current-buffer))
+   ((derived-mode-p 'agent-shell-manager-mode)
+    (or (tabulated-list-get-id)
+        (user-error "No agent-shell buffer at point")))
+   (t
+    (user-error "Run this in an agent-shell buffer or the manager"))))
+
+(defun agent-shell-manager-set-annotation ()
+  "Set annotation for an `agent-shell' buffer.
+
+When called from an `agent-shell' buffer, edits its own annotation.
+When called from the manager, edits the annotation for the buffer at point.
+Submit empty input to clear the current annotation."
+  (interactive)
+  (let* ((buffer (agent-shell-manager--annotation-target-buffer))
+         (current (with-current-buffer buffer
+                    (or agent-shell-manager--annotation "")))
+         (raw-input (read-string
+                     (format "Annotation for %s (empty to clear): "
+                             (buffer-name buffer))
+                     current))
+         (annotation (string-trim raw-input)))
+    (with-current-buffer buffer
+      (setq-local agent-shell-manager--annotation
+                  (unless (string= annotation "") annotation)))
+    (agent-shell-manager-refresh)
+    (message "%s annotation for %s"
+             (if (string= annotation "") "Cleared" "Updated")
+             (buffer-name buffer))))
+
 (defun agent-shell-manager--get-last-command (buffer)
   "Get the last /command used in BUFFER.
 Returns the most recent entry from `comint-input-ring' that starts with /.
@@ -343,6 +390,7 @@ Returns \"-\" if no slash command has been used yet."
                             (mode (agent-shell-manager--get-session-mode buffer))
                             (model (agent-shell-manager--get-model-id buffer))
                             (perms (agent-shell-manager--count-pending-permissions buffer))
+                            (annotation (agent-shell-manager--get-annotation buffer))
                             (path (abbreviate-file-name (agent-shell-manager--get-cwd buffer)))
                             (last-command (agent-shell-manager--get-last-command buffer)))
                        (list buffer
@@ -352,6 +400,7 @@ Returns \"-\" if no slash command has been used yet."
                               mode
                               model
                               perms
+                              annotation
                               path
                               last-command))))
                    buffers)))
