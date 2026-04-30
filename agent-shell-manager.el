@@ -65,6 +65,12 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
   :type 'boolean
   :group 'agent-shell-manager)
 
+(defcustom agent-shell-manager-kill-deletes-buffer nil
+  "When non-nil, `agent-shell-manager-kill' also kills the buffer
+after sending EOF to the agent process."
+  :type 'boolean
+  :group 'agent-shell-manager)
+
 (defvar agent-shell-manager-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
@@ -403,7 +409,9 @@ Otherwise, if another `agent-shell' window is open, reuse it."
       (user-error "Buffer no longer exists"))))
 
 (defun agent-shell-manager-kill ()
-  "Kill the `agent-shell' process at point."
+  "Kill the `agent-shell' process at point.
+When `agent-shell-manager-kill-deletes-buffer' is non-nil, also kill the
+buffer after a short delay (to let the EOF flush)."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
     (unless (buffer-live-p buffer)
@@ -417,8 +425,17 @@ Otherwise, if another `agent-shell' window is open, reuse it."
             (when (process-live-p proc)
               (comint-send-eof)
               (message "Sent EOF to agent-shell process in %s" (buffer-name buffer))))))
-      ;; Give the process a moment to update its status before refreshing
-      (run-with-timer 0.1 nil #'agent-shell-manager-refresh))))
+      (if agent-shell-manager-kill-deletes-buffer
+          (run-with-timer
+           0.3 nil
+           (lambda (b)
+             (when (buffer-live-p b)
+               (let ((kill-buffer-query-functions nil))
+                 (kill-buffer b)))
+             (agent-shell-manager-refresh))
+           buffer)
+        ;; Give the process a moment to update its status before refreshing
+        (run-with-timer 0.1 nil #'agent-shell-manager-refresh)))))
 
 (defun agent-shell-manager-new ()
   "Create a new `agent-shell'."
