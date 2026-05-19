@@ -58,6 +58,15 @@ is controlled by the user's `display-buffer-alist'."
           (const :tag "User-controlled" nil))
   :group 'agent-shell-manager)
 
+(defcustom agent-shell-manager-window-size 0.3
+  "Size of the `agent-shell' manager side window.
+A floating-point number is interpreted as a fraction of the frame
+height (for top/bottom) or width (for left/right).  An integer is
+interpreted as a number of lines or columns.  Only used when
+`agent-shell-manager-side' is non-nil."
+  :type 'number
+  :group 'agent-shell-manager)
+
 (defcustom agent-shell-manager-transient nil
   "When non-nil, automatically hide the manager window after actions.
 This includes switching to a shell buffer with RET.  When enabled,
@@ -563,7 +572,7 @@ by `delete-other-windows' (C-x 1)."
                            buffer
                            `((side . ,agent-shell-manager-side)
                              (slot . 0)
-                             (,size-param . 0.3)
+                             (,size-param . ,agent-shell-manager-window-size)
                              (preserve-size . ,(if (memq
                                                     agent-shell-manager-side
                                                     '(left right))
