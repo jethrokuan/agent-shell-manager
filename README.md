@@ -6,12 +6,10 @@
 
 ## Features
 
-- **Tabulated List View**: View all agent-shell buffers in an organized table showing:
-  - Folder/directory path
+- **Tabulated List View**: View all agent-shell buffers in an organized table.
+  - Default visible columns: Buffer, Status, Mode, Model, Annotation, Last Command
+  - Optional columns: Pending Permissions and Path
   - Current status (Ready, Working, Waiting, Starting..., No Session, Killed, Unknown)
-  - Current session mode
-  - Active model (e.g., "claude-sonnet-4", "gpt-4")
-  - Pending permission requests count (highlighted in yellow when > 0)
   - Annotation for each shell session (useful when multiple shells share a project)
   - Last `/command` used in each shell (for example, `/help` or `/compact`)
   - macOS notification when an agent transitions from Working to Ready
@@ -81,29 +79,53 @@ Once the manager buffer is open, you can use these keys:
 | `C-c C-c`   | Interrupt agent                           |
 | `t`         | View traffic logs                         |
 | `l`         | Toggle logging                            |
-
-| `a`         | Set annotation                            |
-| `n`         | Toggle ready notifications                |
+| `w`         | Set annotation                            |
+| `v`         | Move manager to compact side window       |
+| `V`         | Restore default manager window            |
 | `q`         | Quit manager window                       |
 
 ## Configuration
+
+### Visible Columns
+
+Choose and order columns shown in the manager table:
+
+```elisp
+(setq agent-shell-manager-visible-columns
+      '(provider buffer status mode model annotation last-command))
+```
+
+Available columns are: `buffer`, `provider`, `status`, `mode`, `model`,
+`pending-permissions`, `annotation`, `path`, and `last-command`.
 
 ### Ready Notifications (macOS)
 
 When enabled, a macOS notification is sent when an agent transitions from **Working** to **Ready**.
 
 Notifications are emitted only when either:
-- the manager window is not currently visible, or
-- Emacs is not the active app.
+- Emacs is not the active app, or
+- Emacs is active and neither the manager window nor the agent buffer is currently visible.
 
 ```elisp
 (setq agent-shell-manager-ready-status-notifications t)
 ```
 
-You can also toggle this interactively with:
+To include the default macOS notification sound:
+
+```elisp
+(setq agent-shell-manager-ready-status-notification-sound t)
+```
+
+You can also toggle notifications interactively with:
 
 ```elisp
 M-x agent-shell-manager-toggle-ready-status-notifications
+```
+
+And toggle notification sound interactively with:
+
+```elisp
+M-x agent-shell-manager-toggle-ready-status-notification-sound
 ```
 
 ### Window Position

@@ -37,8 +37,7 @@
 ;;   C-c C-c - Interrupt agent
 ;;   t     - View traffic logs
 ;;   l     - Toggle logging
-;;   a     - Set annotation
-;;   n     - Toggle ready notifications
+;;   w     - Set annotation
 ;;   q     - Quit manager window
 
 ;;; Code:
@@ -69,6 +68,30 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
   :type 'boolean
   :group 'agent-shell-manager)
 
+(defcustom agent-shell-manager-side-window-side 'right
+  "Side used by `agent-shell-manager-switch-to-side-window'."
+  :type '(choice (const :tag "Left" left)
+          (const :tag "Right" right))
+  :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-side-window-width 0.3
+  "Width used by `agent-shell-manager-switch-to-side-window'."
+  :type 'number
+  :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-side-window-columns '(buffer annotation status)
+  "Columns shown by `agent-shell-manager-switch-to-side-window'."
+  :type '(repeat symbol)
+  :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-side-window-column-widths
+  '((buffer . 22)
+    (annotation . 14)
+    (status . 7))
+  "Column widths used by `agent-shell-manager-switch-to-side-window'."
+  :type '(alist :key-type symbol :value-type integer)
+  :group 'agent-shell-manager)
+
 (defcustom agent-shell-manager-ready-status-notifications t
   "When non-nil, send a macOS notification when status changes from working to ready.
 
@@ -76,6 +99,103 @@ Notifications are shown only when the manager is not visible or Emacs
 is not the active application."
   :type 'boolean
   :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-ready-status-notification-sound nil
+  "When non-nil, include the default sound in ready status notifications.
+
+This uses macOS notification sound support via AppleScript."
+  :type 'boolean
+  :group 'agent-shell-manager)
+
+(defconst agent-shell-manager--column-specs
+  '((buffer "Buffer" 40 t)
+    (provider "Provider" 12 t)
+    (status "Status" 15 t)
+    (mode "Mode" 15 t)
+    (model "Model" 21 t)
+    (pending-permissions "Pending Permissions" 20 t)
+    (annotation "Annotation" 25 t)
+    (path "Path" 20 t)
+    (last-command "Last Command" 20 t))
+  "Specs for columns available in `agent-shell-manager-visible-columns'.")
+
+(defcustom agent-shell-manager-visible-columns
+  '(buffer status mode model annotation last-command)
+  "Columns shown in the manager table.
+
+The order of this list controls display order."
+  :type '(repeat
+          (choice (const :tag "Buffer" buffer)
+                  (const :tag "Provider" provider)
+                  (const :tag "Status" status)
+                  (const :tag "Mode" mode)
+                  (const :tag "Model" model)
+                  (const :tag "Pending Permissions" pending-permissions)
+                  (const :tag "Annotation" annotation)
+                  (const :tag "Path" path)
+                  (const :tag "Last Command" last-command)))
+  :group 'agent-shell-manager)
+
+(defun agent-shell-manager--column-spec (column)
+  "Return column spec for COLUMN, or nil if invalid."
+  (assoc column agent-shell-manager--column-specs))
+
+(defun agent-shell-manager--visible-columns ()
+  "Return sanitized list of visible columns.
+
+Invalid or duplicated entries are removed."
+  (let (columns)
+    (dolist (column agent-shell-manager-visible-columns)
+      (when (and (agent-shell-manager--column-spec column)
+                 (not (memq column columns)))
+        (push column columns)))
+    (or (nreverse columns) '(buffer))))
+
+(defun agent-shell-manager--tabulated-list-format (columns &optional widths)
+  "Build `tabulated-list-format' vector for COLUMNS."
+  (vconcat
+   (mapcar (lambda (column)
+             (let ((spec (agent-shell-manager--column-spec column)))
+               (list (nth 1 spec)
+                     (or (alist-get column widths) (nth 2 spec))
+                     (nth 3 spec))))
+           columns)))
+
+(defun agent-shell-manager--column-width (column &optional widths)
+  "Return display width for COLUMN using WIDTHS override when present."
+  (let ((spec (agent-shell-manager--column-spec column)))
+    (or (alist-get column widths) (nth 2 spec))))
+
+(defun agent-shell-manager--single-line-cell (value)
+  "Return VALUE as a one-line string."
+  (replace-regexp-in-string "[\n\r\t]+" " "
+                            (if (stringp value) value (format "%s" value))))
+
+(defun agent-shell-manager--truncate-cell (value width)
+  "Truncate VALUE to WIDTH columns without shifting later columns."
+  (let ((cell (agent-shell-manager--single-line-cell value)))
+    (if (and width (> (string-width cell) width))
+        (truncate-string-to-width cell width nil nil "...")
+      cell)))
+
+(defun agent-shell-manager--column-names (columns)
+  "Return display names for COLUMNS."
+  (mapcar (lambda (column)
+            (nth 1 (agent-shell-manager--column-spec column)))
+          columns))
+
+(defun agent-shell-manager--apply-column-configuration (&optional widths)
+  "Apply visible column configuration in the current manager buffer."
+  (let* ((columns (agent-shell-manager--visible-columns))
+         (column-names (agent-shell-manager--column-names columns))
+         (new-format (agent-shell-manager--tabulated-list-format columns widths))
+         (current-sort-column (car-safe tabulated-list-sort-key)))
+    (unless (equal tabulated-list-format new-format)
+      (setq tabulated-list-format new-format)
+      (tabulated-list-init-header))
+    (unless (member current-sort-column column-names)
+      (setq tabulated-list-sort-key (cons (car column-names) nil)))
+    columns))
 
 (defvar agent-shell-manager-mode-map
   (let ((map (make-sparse-keymap)))
@@ -92,8 +212,9 @@ is not the active application."
     (define-key map (kbd "C-c C-c") #'agent-shell-manager-interrupt)
     (define-key map (kbd "t") #'agent-shell-manager-view-traffic)
     (define-key map (kbd "l") #'agent-shell-manager-toggle-logging)
-    (define-key map (kbd "a") #'agent-shell-manager-set-annotation)
-    (define-key map (kbd "n") #'agent-shell-manager-toggle-ready-status-notifications)
+    (define-key map (kbd "w") #'agent-shell-manager-set-annotation)
+    (define-key map (kbd "v") #'agent-shell-manager-switch-to-side-window)
+    (define-key map (kbd "V") #'agent-shell-manager-switch-to-default-window)
     map)
   "Keymap for `agent-shell-manager-mode'.")
 
@@ -106,8 +227,23 @@ is not the active application."
 (defvar-local agent-shell-manager--annotation nil
   "User annotation for this `agent-shell' buffer.")
 
+(defvar-local agent-shell-manager--last-command nil
+  "Most recent slash command submitted in this `agent-shell' buffer.")
+
+(defvar-local agent-shell-manager--model-id nil
+  "Most recent session model ID known by the manager for this buffer.")
+
+(defvar-local agent-shell-manager--mode-id nil
+  "Most recent session mode ID known by the manager for this buffer.")
+
 (defvar agent-shell-manager--status-history (make-hash-table :test #'eq)
   "Hash table tracking last known status per agent-shell buffer.")
+
+(defvar agent-shell-manager--default-visible-columns nil
+  "Visible columns to restore after using compact side-window layout.")
+
+(defvar-local agent-shell-manager--column-widths nil
+  "Buffer-local column widths overriding `agent-shell-manager--column-specs'.")
 
 (defvar agent-shell-manager--notification-timer nil
   "Timer for polling shell statuses and emitting ready notifications.")
@@ -128,22 +264,12 @@ Key bindings:
 \\[agent-shell-manager-view-traffic] - View traffic logs for agent at point
 \\[agent-shell-manager-toggle-logging] - Toggle ACP logging
 \\[agent-shell-manager-set-annotation] - Set annotation for agent at point
-\\[agent-shell-manager-toggle-ready-status-notifications] - Toggle ready notifications
 \\[quit-window] - Quit the manager window
 
 \\{agent-shell-manager-mode-map}"
-  (setq tabulated-list-format
-        [("Buffer" 35 t)
-         ("Status" 15 t)
-         ("Mode" 15 t)
-         ("Model" 21 t)
-         ("Pending Permissions" 20 t)
-         ("Annotation" 25 t)
-         ("Path" 20 t)
-         ("Last command" 20 t)])
   (setq tabulated-list-padding 2)
-  (setq tabulated-list-sort-key (cons "Buffer" nil))
-  (tabulated-list-init-header)
+  (agent-shell-manager--apply-column-configuration
+   agent-shell-manager--column-widths)
 
   (when agent-shell-manager--refresh-timer
     (cancel-timer agent-shell-manager--refresh-timer))
@@ -225,6 +351,11 @@ Returns one of: waiting, ready, working, killed, or unknown."
        (buffer-live-p agent-shell-manager--global-buffer)
        (get-buffer-window agent-shell-manager--global-buffer t)))
 
+(defun agent-shell-manager--buffer-visible-p (buffer)
+  "Return non-nil when BUFFER is visible in any window."
+  (and (buffer-live-p buffer)
+       (get-buffer-window buffer t)))
+
 (defun agent-shell-manager--emacs-active-p ()
   "Return non-nil when Emacs appears to be the active app.
 
@@ -237,8 +368,11 @@ If focus state can't be determined, returns non-nil."
 (defun agent-shell-manager--send-macos-notification (title message)
   "Send macOS notification with TITLE and MESSAGE."
   (when (eq system-type 'darwin)
-    (let* ((script (format "display notification %S with title %S"
-                           message title))
+    (let* ((script (if agent-shell-manager-ready-status-notification-sound
+                       (format "display notification %S with title %S sound name %S"
+                               message title "default")
+                     (format "display notification %S with title %S"
+                             message title)))
            (osascript (executable-find "osascript")))
       (cond
        ((fboundp 'do-applescript)
@@ -261,11 +395,12 @@ If focus state can't be determined, returns non-nil."
        (t
         (message "agent-shell-manager notification failed: no AppleScript backend found"))))))
 
-(defun agent-shell-manager--should-notify-ready-transition-p ()
-  "Return non-nil when ready notifications should be emitted now."
+(defun agent-shell-manager--should-notify-ready-transition-p (buffer)
+  "Return non-nil when BUFFER ready notifications should be emitted now."
   (and agent-shell-manager-ready-status-notifications
-       (or (not (agent-shell-manager--manager-visible-p))
-           (not (agent-shell-manager--emacs-active-p)))))
+       (or (not (agent-shell-manager--emacs-active-p))
+           (and (not (agent-shell-manager--manager-visible-p))
+                (not (agent-shell-manager--buffer-visible-p buffer))))))
 
 (defun agent-shell-manager--notification-label (buffer)
   "Return notification label for BUFFER.
@@ -285,7 +420,7 @@ CURRENT-STATUS should be the raw status string."
     (puthash buffer current-status agent-shell-manager--status-history)
     (when (and (equal previous-status "working")
                (equal current-status "ready")
-               (agent-shell-manager--should-notify-ready-transition-p))
+               (agent-shell-manager--should-notify-ready-transition-p buffer))
       (agent-shell-manager--send-macos-notification
        "Agent Ready"
        (format "%s is ready"
@@ -325,7 +460,18 @@ CURRENT-STATUS should be the raw status string."
 
 (defun agent-shell-manager--get-buffer-name (buffer)
   "Get the buffer name for BUFFER."
-  (buffer-name buffer))
+  (let ((name (buffer-name buffer)))
+    (if (string-match " Agent @ \\(.*\\)\\'" name)
+        (match-string 1 name)
+      name)))
+
+(defun agent-shell-manager--get-provider (buffer)
+  "Get the provider name for BUFFER."
+  (with-current-buffer buffer
+    (let ((name (buffer-name)))
+      (if (string-match "\\`\\(.*?\\) Agent @ " name)
+          (match-string 1 name)
+        "-"))))
 
 (defun agent-shell-manager--get-session-status (buffer)
   "Get session status for BUFFER."
@@ -338,11 +484,12 @@ CURRENT-STATUS should be the raw status string."
             "active"
           "none")))))
 
-(defun agent-shell-manager--get-combined-status (buffer)
+(defun agent-shell-manager--get-combined-status (buffer &optional raw-status)
   "Get combined status for BUFFER that merges operational and session state.
-Returns a user-friendly status string with appropriate face."
+Returns a user-friendly status string with appropriate face.
+When RAW-STATUS is non-nil, use it instead of recomputing buffer status."
   (with-current-buffer buffer
-    (let ((status (agent-shell-manager--get-status buffer))
+    (let ((status (or raw-status (agent-shell-manager--get-status buffer)))
           (session (agent-shell-manager--get-session-status buffer)))
       (cond
        ;; Killed - highest priority
@@ -373,11 +520,15 @@ Returns a user-friendly status string with appropriate face."
 (defun agent-shell-manager--get-session-mode (buffer)
   "Get the current session mode for BUFFER."
   (with-current-buffer buffer
-    (if (and (boundp 'agent-shell--state)
-             (map-nested-elt agent-shell--state '(:session :mode-id)))
+    (if (or agent-shell-manager--mode-id
+            (and (boundp 'agent-shell--state)
+                 (map-nested-elt agent-shell--state '(:session :mode-id))))
         (or (agent-shell--resolve-session-mode-name
-             (map-nested-elt agent-shell--state '(:session :mode-id))
-             (map-nested-elt agent-shell--state '(:session :modes)))
+             (or agent-shell-manager--mode-id
+                 (map-nested-elt agent-shell--state '(:session :mode-id)))
+             (and (boundp 'agent-shell--state)
+                  (map-nested-elt agent-shell--state '(:session :modes))))
+            agent-shell-manager--mode-id
             "-")
       "-")))
 
@@ -391,19 +542,136 @@ Returns a user-friendly status string with appropriate face."
           (match-string 1 buffer-name)
         "-"))))
 
+(defun agent-shell-manager--map-elt-any (map keys)
+  "Return first non-nil value in MAP for KEYS."
+  (seq-some (lambda (key)
+              (map-elt map key))
+            keys))
+
+(defun agent-shell-manager--config-option-model-p (option)
+  "Return non-nil when OPTION describes a model selector."
+  (let ((category (agent-shell-manager--map-elt-any option '(:category category)))
+        (id (agent-shell-manager--map-elt-any option '(:id id))))
+    (or (equal category "model")
+        (equal id "model"))))
+
+(defun agent-shell-manager--model-config-option (config-options)
+  "Return the model config option from CONFIG-OPTIONS."
+  (seq-find #'agent-shell-manager--config-option-model-p config-options))
+
+(defun agent-shell-manager--config-option-mode-p (option)
+  "Return non-nil when OPTION describes a mode selector."
+  (let ((category (agent-shell-manager--map-elt-any option '(:category category)))
+        (id (agent-shell-manager--map-elt-any option '(:id id))))
+    (or (equal category "mode")
+        (equal id "mode"))))
+
+(defun agent-shell-manager--mode-config-option (config-options)
+  "Return the mode config option from CONFIG-OPTIONS."
+  (seq-find #'agent-shell-manager--config-option-mode-p config-options))
+
+(defun agent-shell-manager--config-option-current-value (option)
+  "Return OPTION's current value."
+  (agent-shell-manager--map-elt-any option
+                                    '(:current-value current-value
+                                      :currentValue currentValue)))
+
+(defun agent-shell-manager--config-option-models (option)
+  "Return `agent-shell' style model entries from OPTION values."
+  (mapcar (lambda (value)
+            `((:model-id . ,(agent-shell-manager--map-elt-any value '(:value value)))
+              (:name . ,(agent-shell-manager--map-elt-any value '(:name name)))
+              (:description . ,(agent-shell-manager--map-elt-any value
+                                                              '(:description description)))))
+          (agent-shell-manager--map-elt-any option '(:options options))))
+
+(defun agent-shell-manager--config-option-modes (option)
+  "Return `agent-shell' style mode entries from OPTION values."
+  (mapcar (lambda (value)
+            `((:id . ,(agent-shell-manager--map-elt-any value '(:value value)))
+              (:name . ,(agent-shell-manager--map-elt-any value '(:name name)))
+              (:description . ,(agent-shell-manager--map-elt-any value
+                                                              '(:description description)))))
+          (agent-shell-manager--map-elt-any option '(:options options))))
+
+(defun agent-shell-manager--model-name (model-id models)
+  "Return display name for MODEL-ID from MODELS, or nil."
+  (map-elt (seq-find (lambda (model)
+                       (string= (map-elt model :model-id) model-id))
+                     models)
+           :name))
+
+(defun agent-shell-manager--current-model-id (state)
+  "Return current model ID from STATE."
+  (if (fboundp 'agent-shell--current-model-id)
+      (agent-shell--current-model-id state)
+    (map-nested-elt state '(:session :model-id))))
+
+(defun agent-shell-manager--available-models (state)
+  "Return available model entries from STATE."
+  (if (fboundp 'agent-shell--get-available-models)
+      (agent-shell--get-available-models state)
+    (map-nested-elt state '(:session :models))))
+
+(defun agent-shell-manager--apply-config-options (state config-options)
+  "Update STATE from ACP CONFIG-OPTIONS.
+Returns non-nil when a model or mode option was applied."
+  (let* ((model-option
+          (agent-shell-manager--model-config-option config-options))
+         (model-id
+          (and model-option
+               (agent-shell-manager--config-option-current-value model-option)))
+         (mode-option
+          (agent-shell-manager--mode-config-option config-options))
+         (mode-id
+          (and mode-option
+               (agent-shell-manager--config-option-current-value mode-option))))
+    (when (or model-id mode-id)
+      (let ((updated-session (map-elt state :session))
+            (models (and model-option
+                         (agent-shell-manager--config-option-models model-option)))
+            (modes (and mode-option
+                        (agent-shell-manager--config-option-modes mode-option))))
+      (if updated-session
+          (progn
+            (when model-id
+              (map-put! updated-session :model-id model-id)
+              (map-put! updated-session :models models))
+            (when mode-id
+              (map-put! updated-session :mode-id mode-id)
+              (map-put! updated-session :modes modes))
+            (map-put! updated-session :config-options config-options))
+        (setq updated-session
+              `(,@(when model-id
+                    `((:model-id . ,model-id)
+                      (:models . ,models)))
+                ,@(when mode-id
+                    `((:mode-id . ,mode-id)
+                      (:modes . ,modes)))
+                (:config-options . ,config-options))))
+      (map-put! state :session updated-session)
+      (when-let* ((buffer (map-elt state :buffer)))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer
+            (when model-id
+              (setq-local agent-shell-manager--model-id model-id))
+            (when mode-id
+              (setq-local agent-shell-manager--mode-id mode-id)))))
+      t))))
+
 (defun agent-shell-manager--get-model-id (buffer)
   "Get the current model ID for BUFFER."
   (with-current-buffer buffer
-    (if (and (boundp 'agent-shell--state)
-             (map-nested-elt agent-shell--state '(:session :model-id)))
-        (let* ((model-id (map-nested-elt agent-shell--state '(:session :model-id)))
-               (models (map-nested-elt agent-shell--state '(:session :models)))
-               (model-info (seq-find (lambda (model)
-                                       (string= (map-elt model :model-id) model-id))
-                                     models)))
-          (or (and model-info (map-elt model-info :name))
-              model-id))
-      "-")))
+    (let* ((state (and (boundp 'agent-shell--state) agent-shell--state))
+           (state-model-id (and state
+                                (agent-shell-manager--current-model-id state)))
+           (model-id (or agent-shell-manager--model-id state-model-id))
+           (models (and state
+                        (agent-shell-manager--available-models state))))
+      (if model-id
+          (or (agent-shell-manager--model-name model-id models)
+              model-id)
+        "-"))))
 
 (defun agent-shell-manager--count-pending-permissions (buffer)
   "Count the number of pending permission requests for BUFFER.
@@ -491,76 +759,124 @@ include the leading slash."
                 (map-elt command 'name))
               (map-elt agent-shell--state :available-commands)))))
 
-(defun agent-shell-manager--get-last-command (buffer)
-  "Get the last valid /command used in BUFFER.
+(defun agent-shell-manager--extract-command-name (input)
+  "Return slash command name parsed from INPUT, or nil."
+  (when (and (stringp input)
+             (string-match "^\\s-*/\\s-*\\([^[:space:]]+\\)" input))
+    (match-string 1 input)))
 
-Returns the most recent entry from `comint-input-ring' that matches one
-of BUFFER's currently available slash commands.
-Returns \"-\" if no valid slash command has been used yet."
+(defun agent-shell-manager--extract-model-id (input)
+  "Return model ID parsed from a slash model INPUT, or nil."
+  (when (and (stringp input)
+             (string-match "^\\s-*/\\s-*model\\s-+\\([^[:space:]]+\\)" input))
+    (match-string 1 input)))
+
+(defun agent-shell-manager--extract-mode-id (input)
+  "Return mode ID parsed from a slash mode INPUT, or nil."
+  (when (and (stringp input)
+             (string-match "^\\s-*/\\s-*mode\\s-+\\([^[:space:]]+\\)" input))
+    (match-string 1 input)))
+
+(defun agent-shell-manager--track-last-command (input)
+  "Track the last valid slash command submitted from the current buffer.
+
+INPUT is the raw command text received from `comint-input-filter-functions'."
+  (let* ((command-name (agent-shell-manager--extract-command-name input))
+         (valid-commands (agent-shell-manager--valid-command-names (current-buffer))))
+    (when (and command-name
+               (or (null valid-commands)
+                   (member command-name valid-commands)))
+      (setq-local agent-shell-manager--last-command
+                  (format "/%s" command-name)))
+    (when-let* ((model-id (agent-shell-manager--extract-model-id input)))
+      (setq-local agent-shell-manager--model-id model-id)
+      (agent-shell-manager-refresh))
+    (when-let* ((mode-id (agent-shell-manager--extract-mode-id input)))
+      (setq-local agent-shell-manager--mode-id mode-id)
+      (agent-shell-manager-refresh))))
+
+(defun agent-shell-manager--ensure-command-tracker (&optional buffer)
+  "Install per-buffer command tracking hook for BUFFER.
+
+When BUFFER is nil, uses the current buffer."
+  (let ((target-buffer (or buffer (current-buffer))))
+    (when (buffer-live-p target-buffer)
+      (with-current-buffer target-buffer
+        (when (derived-mode-p 'agent-shell-mode)
+          (add-hook 'comint-input-filter-functions
+                    #'agent-shell-manager--track-last-command
+                    nil t))))))
+
+(defun agent-shell-manager--ensure-command-trackers ()
+  "Install command tracking hooks in all live `agent-shell' buffers."
+  (let* ((buffers (agent-shell-buffers))
+         (buffers (if (listp buffers) buffers (list buffers))))
+    (mapc #'agent-shell-manager--ensure-command-tracker
+          (seq-filter #'buffer-live-p buffers))))
+
+(defun agent-shell-manager--get-last-command (buffer)
+  "Get the last valid slash command used in BUFFER.
+
+Returns \"-\" if no valid slash command has been submitted yet in BUFFER."
   (with-current-buffer buffer
-    (let ((valid-commands (agent-shell-manager--valid-command-names buffer)))
-      (if (and valid-commands
-               (boundp 'comint-input-ring)
-               (ring-p comint-input-ring))
-          (let ((index 0)
-                (ring-size (ring-length comint-input-ring))
-                (last-command nil))
-            (while (and (< index ring-size)
-                        (not last-command))
-              (let ((input (ring-ref comint-input-ring index)))
-                (when (and (stringp input)
-                           (string-match "^\\s-*/\\s-*\\([^[:space:]]+\\)" input))
-                  (let ((command-name (match-string 1 input)))
-                    (when (member command-name valid-commands)
-                      (setq last-command (format "/%s" command-name))))))
-              (setq index (1+ index)))
-            (or last-command "-"))
-        "-"))))
+    (or agent-shell-manager--last-command "-")))
+
+(defun agent-shell-manager--column-value (column buffer raw-status)
+  "Return BUFFER value for COLUMN.
+
+RAW-STATUS is the precomputed operational status for BUFFER."
+  (pcase column
+    ('buffer (agent-shell-manager--get-buffer-name buffer))
+    ('provider (agent-shell-manager--get-provider buffer))
+    ('status (agent-shell-manager--get-combined-status buffer raw-status))
+    ('mode (agent-shell-manager--get-session-mode buffer))
+    ('model (agent-shell-manager--get-model-id buffer))
+    ('pending-permissions (agent-shell-manager--count-pending-permissions buffer))
+    ('annotation (agent-shell-manager--get-annotation buffer))
+    ('path (abbreviate-file-name (agent-shell-manager--get-cwd buffer)))
+    ('last-command (agent-shell-manager--get-last-command buffer))
+    (_ "-")))
+
+(defun agent-shell-manager--formatted-column-value (column buffer raw-status)
+  "Return formatted value for COLUMN in BUFFER.
+
+RAW-STATUS is the precomputed operational status for BUFFER."
+  (agent-shell-manager--truncate-cell
+   (agent-shell-manager--column-value column buffer raw-status)
+   (agent-shell-manager--column-width
+    column agent-shell-manager--column-widths)))
 
 (defun agent-shell-manager--entries ()
   "Return list of entries for tabulated-list."
-  (let* ((buffers (agent-shell-buffers))
+  (let* ((columns (agent-shell-manager--visible-columns))
+         (buffers (agent-shell-buffers))
          (buffers (if (listp buffers) buffers (list buffers)))
          (buffers (seq-filter #'buffer-live-p buffers))
          (_ignored (agent-shell-manager--prune-status-history buffers))
+         (_ignored-command-trackers
+          (mapc #'agent-shell-manager--ensure-command-tracker buffers))
          (entries (mapcar
                    (lambda (buffer)
-                     (let* ((buffer-name (buffer-name buffer))
-                            (raw-status (agent-shell-manager--get-status buffer))
+                     (let* ((raw-status (agent-shell-manager--get-status buffer))
                             (_notify (agent-shell-manager--maybe-notify-ready-transition
-                                      buffer raw-status))
-                            (status (agent-shell-manager--get-combined-status buffer))
-                            (mode (agent-shell-manager--get-session-mode buffer))
-                            (model (agent-shell-manager--get-model-id buffer))
-                            (perms (agent-shell-manager--count-pending-permissions buffer))
-                            (annotation (agent-shell-manager--get-annotation buffer))
-                            (path (abbreviate-file-name (agent-shell-manager--get-cwd buffer)))
-                            (last-command (agent-shell-manager--get-last-command buffer)))
+                                      buffer raw-status)))
                        (list buffer
-                             (vector
-                              buffer-name
-                              status
-                              mode
-                              model
-                              perms
-                              annotation
-                              path
-                              last-command))))
+                             (vconcat
+                              (mapcar (lambda (column)
+                                        (agent-shell-manager--formatted-column-value
+                                         column buffer raw-status))
+                                      columns)))))
                    buffers)))
     ;; Sort entries: killed processes go to the bottom
     (sort entries
           (lambda (a b)
-            (let ((status-a (aref (cadr a) 1))
-                  (status-b (aref (cadr b) 1)))
-              ;; Remove text properties to get plain status string
-              (setq status-a (substring-no-properties status-a))
-              (setq status-b (substring-no-properties status-b))
+            (let ((killed-a (string= (agent-shell-manager--get-status (car a)) "killed"))
+                  (killed-b (string= (agent-shell-manager--get-status (car b)) "killed")))
               (cond
                ;; Both killed or both not killed - maintain original order (stable)
-               ((and (string= status-a "Killed") (string= status-b "Killed")) nil)
-               ((and (not (string= status-a "Killed")) (not (string= status-b "Killed"))) nil)
+               ((eq killed-a killed-b) nil)
                ;; a is killed, b is not - a goes after b
-               ((string= status-a "Killed") nil)
+               (killed-a nil)
                ;; b is killed, a is not - a goes before b
                (t t)))))))
 
@@ -570,8 +886,38 @@ Returns \"-\" if no valid slash command has been used yet."
   (when (and agent-shell-manager--global-buffer
              (buffer-live-p agent-shell-manager--global-buffer))
     (with-current-buffer agent-shell-manager--global-buffer
+      (agent-shell-manager--apply-column-configuration
+       agent-shell-manager--column-widths)
       (setq tabulated-list-entries (agent-shell-manager--entries))
       (tabulated-list-print t))))
+
+(defun agent-shell-manager--refresh-visible-manager (&rest _args)
+  "Refresh the manager when it is visible."
+  (when (agent-shell-manager--manager-visible-p)
+    (agent-shell-manager-refresh)))
+
+(defun agent-shell-manager--after-agent-shell-notification (&rest args)
+  "Refresh model state after `agent-shell--on-notification' handles ARGS."
+  (let ((state (plist-get args :state))
+        (acp-notification (plist-get args :acp-notification)))
+    (when state
+      (pcase (map-nested-elt acp-notification '(params update sessionUpdate))
+        ("config_option_update"
+         (agent-shell-manager-refresh))
+        ("current_mode_update"
+         (when-let* ((mode-id (or (map-nested-elt acp-notification
+                                                  '(params update currentModeId))
+                                  (map-nested-elt acp-notification
+                                                  '(params update modeId)))))
+           (when-let* ((updated-session (map-elt state :session)))
+             (map-put! updated-session :mode-id mode-id)
+             (map-put! state :session updated-session))
+           (when-let* ((buffer (map-elt state :buffer)))
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (setq-local agent-shell-manager--mode-id mode-id)
+                 (agent-shell--update-header-and-mode-line))))
+           (agent-shell-manager-refresh)))))))
 
 (defun agent-shell-manager--hide-window ()
   "Hide the manager window if `agent-shell-manager-transient' is non-nil."
@@ -710,8 +1056,7 @@ Kills the current process and starts a new one with the same config if possible.
     (with-current-buffer buffer
       (unless (derived-mode-p 'agent-shell-mode)
         (user-error "Not an agent-shell buffer"))
-      (agent-shell-set-session-mode))
-    (agent-shell-manager-refresh)))
+      (agent-shell-set-session-mode #'agent-shell-manager-refresh))))
 
 (defun agent-shell-manager-set-model ()
   "Set session model for the `agent-shell' at point."
@@ -722,8 +1067,7 @@ Kills the current process and starts a new one with the same config if possible.
     (with-current-buffer buffer
       (unless (derived-mode-p 'agent-shell-mode)
         (user-error "Not an agent-shell buffer"))
-      (agent-shell-set-session-model))
-    (agent-shell-manager-refresh)))
+      (agent-shell-set-session-model #'agent-shell-manager-refresh))))
 
 (defun agent-shell-manager-interrupt ()
   "Interrupt the `agent-shell' at point."
@@ -767,10 +1111,91 @@ Kills the current process and starts a new one with the same config if possible.
                "enabled"
              "disabled")))
 
+(defun agent-shell-manager-toggle-ready-status-notification-sound ()
+  "Toggle `agent-shell-manager-ready-status-notification-sound'."
+  (interactive)
+  (setq agent-shell-manager-ready-status-notification-sound
+        (not agent-shell-manager-ready-status-notification-sound))
+  (message "Ready status notification sound %s"
+           (if agent-shell-manager-ready-status-notification-sound
+               "enabled"
+             "disabled")))
+
+(defun agent-shell-manager--display-buffer-in-side-window (buffer side size)
+  "Display BUFFER in a side window at SIDE using SIZE."
+  (let ((size-param (if (memq side '(left right))
+                        'window-width
+                      'window-height)))
+    (display-buffer-in-side-window
+     buffer
+     `((side . ,side)
+       (slot . 0)
+       (,size-param . ,size)
+       (preserve-size . ,(if (memq side '(left right))
+                             '(t . nil)
+                           '(nil . t)))
+       ,@(unless agent-shell-manager-transient
+           '((window-parameters .
+              ((no-delete-other-windows . t)))))))))
+
+(defun agent-shell-manager--show-buffer (&optional side size column-widths padding)
+  "Show the manager buffer.
+
+When SIDE is non-nil, display it in a side window using SIZE.
+Otherwise, use `agent-shell-manager-side' or the user's
+`display-buffer' configuration."
+  (let* ((buffer (get-buffer-create "*Agent-Shell Buffers*"))
+         (old-window (get-buffer-window buffer)))
+    (when (window-live-p old-window)
+      (set-window-dedicated-p old-window nil)
+      (when (window-deletable-p old-window)
+        (delete-window old-window)))
+    (let ((window (cond
+                   (side
+                    (agent-shell-manager--display-buffer-in-side-window
+                     buffer side size))
+                   (agent-shell-manager-side
+                    (agent-shell-manager--display-buffer-in-side-window
+                     buffer agent-shell-manager-side 0.3))
+                   (t
+                    (display-buffer buffer)))))
+      (setq agent-shell-manager--global-buffer buffer)
+      (with-current-buffer buffer
+        (agent-shell-manager-mode)
+        (setq-local agent-shell-manager--column-widths column-widths)
+        (when padding
+          (setq-local tabulated-list-padding padding))
+        (agent-shell-manager-refresh))
+      (set-window-dedicated-p window t)
+      (select-window window))))
+
+(defun agent-shell-manager-switch-to-side-window ()
+  "Move manager to a compact side window."
+  (interactive)
+  (unless (equal agent-shell-manager-visible-columns
+                 agent-shell-manager-side-window-columns)
+    (setq agent-shell-manager--default-visible-columns
+          agent-shell-manager-visible-columns))
+  (setq agent-shell-manager-visible-columns
+        agent-shell-manager-side-window-columns)
+  (agent-shell-manager--show-buffer
+   agent-shell-manager-side-window-side
+   agent-shell-manager-side-window-width
+   agent-shell-manager-side-window-column-widths
+   1))
+
+(defun agent-shell-manager-switch-to-default-window ()
+  "Move manager to its default window and restore previous columns."
+  (interactive)
+  (when agent-shell-manager--default-visible-columns
+    (setq agent-shell-manager-visible-columns
+          agent-shell-manager--default-visible-columns))
+  (agent-shell-manager--show-buffer nil nil nil 2))
+
 ;;;###autoload
 (defun agent-shell-manager-toggle ()
   "Toggle the `agent-shell' buffer list window.
-Shows buffer name, agent type, status (ready/waiting/working), session info, and mode.
+Shows agent buffers in a configurable tabulated list.
 The position of the window is controlled by `agent-shell-manager-side'.
 When `agent-shell-manager-transient' is non-nil, the window can be closed
 by `delete-other-windows' (C-x 1)."
@@ -780,35 +1205,21 @@ by `delete-other-windows' (C-x 1)."
     (if (and window (window-live-p window))
         ;; Window is visible, hide it
         (delete-window window)
-      ;; Window is not visible, show it
-      (let ((window (if agent-shell-manager-side
-                        ;; Use side window with configured position
-                        (let ((size-param (if (memq agent-shell-manager-side
-                                                    '(left right))
-                                              'window-width
-                                            'window-height)))
-                          (display-buffer-in-side-window
-                           buffer
-                           `((side . ,agent-shell-manager-side)
-                             (slot . 0)
-                             (,size-param . 0.3)
-                             (preserve-size . ,(if (memq
-                                                    agent-shell-manager-side
-                                                    '(left right))
-                                                   '(t . nil)
-                                                 '(nil . t)))
-                             ,@(unless agent-shell-manager-transient
-                                 '((window-parameters .
-                                    ((no-delete-other-windows . t))))))))
-                      ;; Use regular window, let user's config control display
-                      (display-buffer buffer))))
-        (setq agent-shell-manager--global-buffer buffer)
-        (with-current-buffer buffer
-          (agent-shell-manager-mode)
-          (agent-shell-manager-refresh))
-        ;; Make the window dedicated so it can't be used for other buffers
-        (set-window-dedicated-p window t)
-        (select-window window)))))
+      ;; Window is not visible, show it.
+      (agent-shell-manager--show-buffer))))
+
+(add-hook 'agent-shell-mode-hook #'agent-shell-manager--ensure-command-tracker)
+(agent-shell-manager--ensure-command-trackers)
+
+(unless (advice-member-p #'agent-shell-manager--refresh-visible-manager
+                         'agent-shell--update-header-and-mode-line)
+  (advice-add 'agent-shell--update-header-and-mode-line
+              :after #'agent-shell-manager--refresh-visible-manager))
+
+(unless (advice-member-p #'agent-shell-manager--after-agent-shell-notification
+                         'agent-shell--on-notification)
+  (advice-add 'agent-shell--on-notification
+              :after #'agent-shell-manager--after-agent-shell-notification))
 
 (when agent-shell-manager-ready-status-notifications
   (agent-shell-manager--ensure-notification-timer))
