@@ -107,6 +107,11 @@ This uses macOS notification sound support via AppleScript."
   :type 'boolean
   :group 'agent-shell-manager)
 
+(defface agent-shell-manager-done
+  '((t (:foreground "#16524F" :weight bold)))
+  "Face for agents that completed since last visit."
+  :group 'agent-shell-manager)
+
 (defconst agent-shell-manager--column-specs
   '((buffer "Buffer" 40 t)
     (provider "Provider" 12 t)
@@ -239,6 +244,9 @@ Invalid or duplicated entries are removed."
 (defvar agent-shell-manager--status-history (make-hash-table :test #'eq)
   "Hash table tracking last known status per agent-shell buffer.")
 
+(defvar agent-shell-manager--done-unseen (make-hash-table :test #'eq)
+  "Hash table tracking agent buffers completed since last visit.")
+
 (defvar agent-shell-manager--default-visible-columns nil
   "Visible columns to restore after using compact side-window layout.")
 
@@ -356,6 +364,26 @@ Returns one of: waiting, ready, working, killed, or unknown."
   (and (buffer-live-p buffer)
        (get-buffer-window buffer t)))
 
+(defun agent-shell-manager--buffer-selected-p (buffer)
+  "Return non-nil when BUFFER is selected in the current frame."
+  (and (buffer-live-p buffer)
+       (eq (window-buffer (selected-window)) buffer)))
+
+(defun agent-shell-manager--done-unseen-p (buffer)
+  "Return non-nil when BUFFER completed since last visit."
+  (gethash buffer agent-shell-manager--done-unseen))
+
+(defun agent-shell-manager--clear-done-unseen (buffer)
+  "Clear unseen completion state for BUFFER."
+  (when (gethash buffer agent-shell-manager--done-unseen)
+    (remhash buffer agent-shell-manager--done-unseen)
+    (agent-shell-manager-refresh)))
+
+(defun agent-shell-manager--mark-current-agent-visited ()
+  "Clear unseen completion state when visiting an `agent-shell' buffer."
+  (when (derived-mode-p 'agent-shell-mode)
+    (agent-shell-manager--clear-done-unseen (current-buffer))))
+
 (defun agent-shell-manager--emacs-active-p ()
   "Return non-nil when Emacs appears to be the active app.
 
@@ -418,13 +446,18 @@ Includes annotation when present to help identify shell scope."
 CURRENT-STATUS should be the raw status string."
   (let ((previous-status (gethash buffer agent-shell-manager--status-history)))
     (puthash buffer current-status agent-shell-manager--status-history)
+    (when (agent-shell-manager--buffer-selected-p buffer)
+      (remhash buffer agent-shell-manager--done-unseen))
     (when (and (equal previous-status "working")
-               (equal current-status "ready")
-               (agent-shell-manager--should-notify-ready-transition-p buffer))
-      (agent-shell-manager--send-macos-notification
-       "Agent Ready"
-       (format "%s is ready"
-               (agent-shell-manager--notification-label buffer))))))
+               (equal current-status "ready"))
+      (if (agent-shell-manager--buffer-selected-p buffer)
+          (remhash buffer agent-shell-manager--done-unseen)
+        (puthash buffer t agent-shell-manager--done-unseen))
+      (when (agent-shell-manager--should-notify-ready-transition-p buffer)
+        (agent-shell-manager--send-macos-notification
+         "Agent Ready"
+         (format "%s is ready"
+                 (agent-shell-manager--notification-label buffer)))))))
 
 (defun agent-shell-manager--prune-status-history (buffers)
   "Drop status cache entries for buffers not present in BUFFERS list."
@@ -434,12 +467,21 @@ CURRENT-STATUS should be the raw status string."
        (remhash buffer agent-shell-manager--status-history)))
    agent-shell-manager--status-history))
 
+(defun agent-shell-manager--prune-done-unseen (buffers)
+  "Drop unseen completion entries for buffers not present in BUFFERS list."
+  (maphash
+   (lambda (buffer _done)
+     (unless (memq buffer buffers)
+       (remhash buffer agent-shell-manager--done-unseen)))
+   agent-shell-manager--done-unseen))
+
 (defun agent-shell-manager--poll-ready-transitions ()
   "Poll shell statuses and emit notifications for ready transitions."
   (let* ((buffers (agent-shell-buffers))
          (buffers (if (listp buffers) buffers (list buffers)))
          (buffers (seq-filter #'buffer-live-p buffers)))
     (agent-shell-manager--prune-status-history buffers)
+    (agent-shell-manager--prune-done-unseen buffers)
     (dolist (buffer buffers)
       (let ((status (agent-shell-manager--get-status buffer)))
         (agent-shell-manager--maybe-notify-ready-transition buffer status)))))
@@ -506,7 +548,9 @@ When RAW-STATUS is non-nil, use it instead of recomputing buffer status."
        ;; Ready with active session
        ((and (string= status "ready")
              (string= session "active"))
-        (propertize "Ready" 'face 'success))
+        (if (agent-shell-manager--done-unseen-p buffer)
+            (propertize "Done" 'face 'agent-shell-manager-done)
+          (propertize "Ready" 'face 'success)))
        ;; Working
        ((string= status "working")
         (propertize "Working" 'face 'warning))
@@ -853,6 +897,7 @@ RAW-STATUS is the precomputed operational status for BUFFER."
          (buffers (if (listp buffers) buffers (list buffers)))
          (buffers (seq-filter #'buffer-live-p buffers))
          (_ignored (agent-shell-manager--prune-status-history buffers))
+         (_ignored-done (agent-shell-manager--prune-done-unseen buffers))
          (_ignored-command-trackers
           (mapc #'agent-shell-manager--ensure-command-tracker buffers))
          (entries (mapcar
@@ -960,6 +1005,7 @@ Otherwise, if another `agent-shell' window is open, reuse it."
                   (select-window agent-shell-window))
               ;; No existing agent-shell window, use default behavior
               (agent-shell--display-buffer buffer))))
+          (agent-shell-manager--clear-done-unseen buffer)
           (agent-shell-manager--hide-window))
       (user-error "Buffer no longer exists"))))
 
@@ -1220,6 +1266,8 @@ by `delete-other-windows' (C-x 1)."
                          'agent-shell--on-notification)
   (advice-add 'agent-shell--on-notification
               :after #'agent-shell-manager--after-agent-shell-notification))
+
+(add-hook 'post-command-hook #'agent-shell-manager--mark-current-agent-visited)
 
 (when agent-shell-manager-ready-status-notifications
   (agent-shell-manager--ensure-notification-timer))
