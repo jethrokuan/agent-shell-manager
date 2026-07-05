@@ -74,9 +74,19 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
           (const :tag "Right" right))
   :group 'agent-shell-manager)
 
-(defcustom agent-shell-manager-side-window-width 0.3
+(defcustom agent-shell-manager-side-window-width 0.22
   "Width used by `agent-shell-manager-switch-to-side-window'."
   :type 'number
+  :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-side-window-min-width 36
+  "Minimum width in columns for the manager side window."
+  :type 'integer
+  :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-side-window-max-width 44
+  "Maximum width in columns for the manager side window."
+  :type 'integer
   :group 'agent-shell-manager)
 
 (defcustom agent-shell-manager-side-window-columns '(buffer annotation status)
@@ -85,8 +95,8 @@ the manager window can also be closed by `delete-other-windows' (C-x 1)."
   :group 'agent-shell-manager)
 
 (defcustom agent-shell-manager-side-window-column-widths
-  '((buffer . 22)
-    (annotation . 14)
+  '((buffer . 15)
+    (annotation . 13)
     (status . 7))
   "Column widths used by `agent-shell-manager-switch-to-side-window'."
   :type '(alist :key-type symbol :value-type integer)
@@ -1167,22 +1177,55 @@ Kills the current process and starts a new one with the same config if possible.
                "enabled"
              "disabled")))
 
+(defun agent-shell-manager--clamp (value minimum maximum)
+  "Clamp VALUE between MINIMUM and MAXIMUM."
+  (min maximum (max minimum value)))
+
+(defun agent-shell-manager--side-window-size (side size)
+  "Return window SIZE for SIDE.
+
+Left and right side windows are clamped between
+`agent-shell-manager-side-window-min-width' and
+`agent-shell-manager-side-window-max-width'."
+  (if (memq side '(left right))
+      (agent-shell-manager--clamp
+       (if (floatp size)
+           (floor (* (frame-width) size))
+         size)
+       agent-shell-manager-side-window-min-width
+       agent-shell-manager-side-window-max-width)
+    size))
+
+(defun agent-shell-manager--resize-side-window (window side size)
+  "Resize WINDOW at SIDE to SIZE when it is a left/right side window."
+  (when (and (window-live-p window)
+             (memq side '(left right)))
+    (let* ((target-width (agent-shell-manager--side-window-size side size))
+           (delta (- target-width (window-total-width window))))
+      (unless (zerop delta)
+        (ignore-errors
+          (window-resize window delta t t))))))
+
 (defun agent-shell-manager--display-buffer-in-side-window (buffer side size)
   "Display BUFFER in a side window at SIDE using SIZE."
   (let ((size-param (if (memq side '(left right))
                         'window-width
-                      'window-height)))
-    (display-buffer-in-side-window
-     buffer
-     `((side . ,side)
-       (slot . 0)
-       (,size-param . ,size)
-       (preserve-size . ,(if (memq side '(left right))
-                             '(t . nil)
-                           '(nil . t)))
-       ,@(unless agent-shell-manager-transient
-           '((window-parameters .
-              ((no-delete-other-windows . t)))))))))
+                      'window-height))
+        (window-size (agent-shell-manager--side-window-size side size)))
+    (let ((window
+           (display-buffer-in-side-window
+            buffer
+            `((side . ,side)
+              (slot . 0)
+              (,size-param . ,window-size)
+              (preserve-size . ,(if (memq side '(left right))
+                                    '(t . nil)
+                                  '(nil . t)))
+              ,@(unless agent-shell-manager-transient
+                  '((window-parameters .
+                     ((no-delete-other-windows . t)))))))))
+      (agent-shell-manager--resize-side-window window side size)
+      window)))
 
 (defun agent-shell-manager--show-buffer (&optional side size column-widths padding)
   "Show the manager buffer.
