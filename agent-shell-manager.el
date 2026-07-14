@@ -1,5 +1,7 @@
 ;;; agent-shell-manager.el --- Buffer manager for agent-shell -*- lexical-binding: t; -*-
 
+;; Package-Requires: ((emacs "25.1") (agent-shell "0"))
+
 ;; Copyright (C) 2025 Jethro Kuan
 
 ;; This package is free software; you can redistribute it and/or modify
