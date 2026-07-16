@@ -43,6 +43,7 @@
 ;;; Code:
 
 (require 'agent-shell)
+(require 'cl-lib)
 (require 'tabulated-list)
 (require 'subr-x)
 
@@ -114,6 +115,28 @@ is not the active application."
   "When non-nil, include the default sound in ready status notifications.
 
 This uses macOS notification sound support via AppleScript."
+  :type 'boolean
+  :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-show-annotation-in-header t
+  "When non-nil, show annotations in the `agent-shell' header.
+
+The annotation is appended to the project name in the shell header,
+leaving the actual buffer name unchanged."
+  :type 'boolean
+  :group 'agent-shell-manager)
+
+(defcustom agent-shell-manager-rename-buffers-with-annotation nil
+  "When non-nil, prefix annotated `agent-shell' buffer names with annotation.
+
+For example, an annotation of \"review\" turns
+\"Codex Agent @ project\" into \"review @ Codex Agent @ project\".
+Clearing the annotation restores the original buffer name.
+
+This is disabled by default because `agent-shell' uses buffer names in
+parts of its event display and session plumbing.  Prefer
+`agent-shell-manager-show-annotation-in-header' unless you specifically
+need renamed buffers."
   :type 'boolean
   :group 'agent-shell-manager)
 
@@ -206,10 +229,13 @@ Invalid or duplicated entries are removed."
          (new-format (agent-shell-manager--tabulated-list-format columns widths))
          (current-sort-column (car-safe tabulated-list-sort-key)))
     (unless (equal tabulated-list-format new-format)
-      (setq tabulated-list-format new-format)
-      (tabulated-list-init-header))
+      (setq tabulated-list-format new-format))
     (unless (member current-sort-column column-names)
       (setq tabulated-list-sort-key (cons (car column-names) nil)))
+    ;; The manager window is often deleted and recreated.  In that case the
+    ;; tabulated format may be unchanged while `header-line-format' still needs
+    ;; rebuilding for the new window display.
+    (tabulated-list-init-header)
     columns))
 
 (defvar agent-shell-manager-mode-map
@@ -242,6 +268,15 @@ Invalid or duplicated entries are removed."
 (defvar-local agent-shell-manager--annotation nil
   "User annotation for this `agent-shell' buffer.")
 
+(defvar-local agent-shell-manager--base-buffer-name nil
+  "Original `agent-shell' buffer name before annotation prefixing.")
+
+(defvar-local agent-shell-manager--pending-buffer-rename nil
+  "Non-nil when annotation rename should run after the agent is idle.")
+
+(defvar-local agent-shell-manager--pending-buffer-rename-timer nil
+  "Timer retrying a deferred annotation buffer rename.")
+
 (defvar-local agent-shell-manager--last-command nil
   "Most recent slash command submitted in this `agent-shell' buffer.")
 
@@ -262,6 +297,12 @@ Invalid or duplicated entries are removed."
 
 (defvar-local agent-shell-manager--column-widths nil
   "Buffer-local column widths overriding `agent-shell-manager--column-specs'.")
+
+(defvar-local agent-shell-manager--last-entry-id nil
+  "Most recent tabulated-list entry ID selected in the manager.")
+
+(defvar-local agent-shell-manager--last-line-number nil
+  "Most recent manager line number selected as a fallback position.")
 
 (defvar agent-shell-manager--notification-timer nil
   "Timer for polling shell statuses and emitting ready notifications.")
@@ -445,9 +486,10 @@ If focus state can't be determined, returns non-nil."
 
 Includes annotation when present to help identify shell scope."
   (with-current-buffer buffer
-    (let ((annotation (and (stringp agent-shell-manager--annotation)
-                           (string-trim agent-shell-manager--annotation))))
-      (if (and annotation (not (string-empty-p annotation)))
+    (let ((annotation (agent-shell-manager--annotation-string buffer)))
+      (if (and annotation
+               (or (not agent-shell-manager-rename-buffers-with-annotation)
+                   agent-shell-manager--pending-buffer-rename))
           (format "%s (%s)" (buffer-name buffer) annotation)
         (buffer-name buffer)))))
 
@@ -510,6 +552,124 @@ CURRENT-STATUS should be the raw status string."
     (cancel-timer agent-shell-manager--notification-timer)
     (setq agent-shell-manager--notification-timer nil)))
 
+(defun agent-shell-manager--annotation-string (buffer)
+  "Return BUFFER's normalized annotation, or nil when absent."
+  (with-current-buffer buffer
+    (when (stringp agent-shell-manager--annotation)
+      (let ((annotation (string-trim
+                         (agent-shell-manager--single-line-cell
+                          agent-shell-manager--annotation))))
+        (unless (string-empty-p annotation)
+          annotation)))))
+
+(defun agent-shell-manager--project-name-with-annotation (project-name annotation)
+  "Return PROJECT-NAME with ANNOTATION appended for header display."
+  (if (and (stringp project-name)
+           annotation
+           (not (string-empty-p annotation)))
+      (format "%s (%s)" project-name annotation)
+    project-name))
+
+(defun agent-shell-manager--make-header-with-annotation (original state &rest args)
+  "Call ORIGINAL header renderer with the current annotation in project name."
+  (let ((annotation (and agent-shell-manager-show-annotation-in-header
+                         (derived-mode-p 'agent-shell-mode)
+                         (agent-shell-manager--annotation-string
+                          (current-buffer)))))
+    (if (and annotation (fboundp 'agent-shell--project-name))
+        (let ((project-name-function (symbol-function 'agent-shell--project-name)))
+          (cl-letf (((symbol-function 'agent-shell--project-name)
+                     (lambda (&rest project-name-args)
+                       (agent-shell-manager--project-name-with-annotation
+                        (apply project-name-function project-name-args)
+                        annotation))))
+            (apply original state args)))
+      (apply original state args))))
+
+(defun agent-shell-manager--update-agent-header (buffer)
+  "Refresh `agent-shell' header for BUFFER when possible."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (and (derived-mode-p 'agent-shell-mode)
+                 (fboundp 'agent-shell--update-header-and-mode-line))
+        (agent-shell--update-header-and-mode-line)))))
+
+(defun agent-shell-manager--strip-annotation-prefix (name annotation)
+  "Return NAME without ANNOTATION prefix when it has one."
+  (let ((prefix (and annotation (format "%s @ " annotation))))
+    (if (and prefix (string-prefix-p prefix name))
+        (substring name (length prefix))
+      name)))
+
+(defun agent-shell-manager--base-buffer-name (buffer)
+  "Return BUFFER's name without an annotation prefix."
+  (with-current-buffer buffer
+    (or agent-shell-manager--base-buffer-name
+        (setq-local agent-shell-manager--base-buffer-name
+                    (agent-shell-manager--strip-annotation-prefix
+                     (buffer-name)
+                     (agent-shell-manager--annotation-string buffer))))))
+
+(defun agent-shell-manager--safe-to-rename-buffer-p (buffer)
+  "Return non-nil when BUFFER can be renamed without disturbing the agent."
+  (member (agent-shell-manager--get-status buffer)
+          '("ready" "killed" "unknown")))
+
+(defun agent-shell-manager--annotation-buffer-name (buffer)
+  "Return the desired annotated name for BUFFER."
+  (let* ((base-name (agent-shell-manager--base-buffer-name buffer))
+         (annotation (agent-shell-manager--annotation-string buffer)))
+    (if annotation
+        (format "%s @ %s" annotation base-name)
+      base-name)))
+
+(defun agent-shell-manager--pending-buffer-rename-timer (buffer)
+  "Retry pending annotation rename for BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq-local agent-shell-manager--pending-buffer-rename-timer nil)
+      (when agent-shell-manager--pending-buffer-rename
+        (agent-shell-manager--rename-buffer-for-annotation buffer)
+        (when agent-shell-manager--pending-buffer-rename
+          (agent-shell-manager--schedule-pending-buffer-rename buffer))))))
+
+(defun agent-shell-manager--schedule-pending-buffer-rename (buffer)
+  "Schedule a retry for BUFFER's deferred annotation rename."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (unless (timerp agent-shell-manager--pending-buffer-rename-timer)
+        (setq-local agent-shell-manager--pending-buffer-rename-timer
+                    (run-with-timer
+                     1 nil
+                     #'agent-shell-manager--pending-buffer-rename-timer
+                     buffer))))))
+
+(defun agent-shell-manager--rename-buffer-for-annotation (buffer &optional defer)
+  "Rename BUFFER to include its annotation when configured.
+
+When DEFER is non-nil, postpone the rename until BUFFER is idle."
+  (when agent-shell-manager-rename-buffers-with-annotation
+    (with-current-buffer buffer
+      (let ((target-name (agent-shell-manager--annotation-buffer-name buffer)))
+        (cond
+         ((string= (buffer-name) target-name)
+          (setq-local agent-shell-manager--pending-buffer-rename nil))
+         ((or defer (not (agent-shell-manager--safe-to-rename-buffer-p buffer)))
+          (setq-local agent-shell-manager--pending-buffer-rename t)
+          (agent-shell-manager--schedule-pending-buffer-rename buffer))
+         (t
+          (rename-buffer target-name t)
+          (setq-local agent-shell-manager--pending-buffer-rename nil)))))))
+
+(defun agent-shell-manager--apply-pending-buffer-rename (buffer raw-status)
+  "Apply BUFFER's pending annotation rename when RAW-STATUS is idle."
+  (when (and agent-shell-manager-rename-buffers-with-annotation
+             (buffer-live-p buffer))
+    (with-current-buffer buffer
+      (when (and agent-shell-manager--pending-buffer-rename
+                 (member raw-status '("ready" "killed" "unknown")))
+        (agent-shell-manager--rename-buffer-for-annotation buffer)))))
+
 (defun agent-shell-manager--get-buffer-name (buffer)
   "Get the buffer name for BUFFER."
   (let ((name (buffer-name buffer)))
@@ -520,10 +680,12 @@ CURRENT-STATUS should be the raw status string."
 (defun agent-shell-manager--get-provider (buffer)
   "Get the provider name for BUFFER."
   (with-current-buffer buffer
-    (let ((name (buffer-name)))
-      (if (string-match "\\`\\(.*?\\) Agent @ " name)
-          (match-string 1 name)
-        "-"))))
+    (or (and (boundp 'agent-shell--state)
+             (map-nested-elt agent-shell--state '(:agent-config :buffer-name)))
+        (let ((name (agent-shell-manager--base-buffer-name buffer)))
+          (if (string-match "\\`\\(.*?\\) Agent @ " name)
+              (match-string 1 name)
+            "-")))))
 
 (defun agent-shell-manager--get-session-status (buffer)
   "Get session status for BUFFER."
@@ -589,7 +751,7 @@ When RAW-STATUS is non-nil, use it instead of recomputing buffer status."
 (defun agent-shell-manager--get-agent-kind (buffer)
   "Get the agent kind for BUFFER by parsing the buffer name."
   (with-current-buffer buffer
-    (let ((buffer-name (buffer-name)))
+    (let ((buffer-name (agent-shell-manager--base-buffer-name buffer)))
       ;; Buffer names are in the format: "Agent Name Agent @ /path/to/dir"
       ;; Extract the agent name before " Agent @ "
       (if (string-match "^\\(.*?\\) Agent @ " buffer-name)
@@ -795,12 +957,25 @@ Submit empty input to clear the current annotation."
                      current))
          (annotation (string-trim raw-input)))
     (with-current-buffer buffer
+      (agent-shell-manager--base-buffer-name buffer)
       (setq-local agent-shell-manager--annotation
                   (unless (string= annotation "") annotation)))
+    (agent-shell-manager--rename-buffer-for-annotation buffer)
+    (unless agent-shell-manager-rename-buffers-with-annotation
+      (with-current-buffer buffer
+        (setq-local agent-shell-manager--pending-buffer-rename nil)
+        (when (timerp agent-shell-manager--pending-buffer-rename-timer)
+          (cancel-timer agent-shell-manager--pending-buffer-rename-timer)
+          (setq-local agent-shell-manager--pending-buffer-rename-timer nil))))
+    (agent-shell-manager--update-agent-header buffer)
     (agent-shell-manager-refresh)
-    (message "%s annotation for %s"
+    (message "%s annotation for %s%s"
              (if (string= annotation "") "Cleared" "Updated")
-             (buffer-name buffer))))
+             (buffer-name buffer)
+             (if (with-current-buffer buffer
+                   agent-shell-manager--pending-buffer-rename)
+                 " (buffer rename pending until idle)"
+               ""))))
 
 (defun agent-shell-manager--valid-command-names (buffer)
   "Return valid slash command names for BUFFER.
@@ -915,6 +1090,8 @@ RAW-STATUS is the precomputed operational status for BUFFER."
                      (let* ((raw-status (agent-shell-manager--get-status buffer))
                             (_notify (agent-shell-manager--maybe-notify-ready-transition
                                       buffer raw-status)))
+                       (agent-shell-manager--apply-pending-buffer-rename
+                        buffer raw-status)
                        (list buffer
                              (vconcat
                               (mapcar (lambda (column)
@@ -935,16 +1112,72 @@ RAW-STATUS is the precomputed operational status for BUFFER."
                ;; b is killed, a is not - a goes before b
                (t t)))))))
 
+(defun agent-shell-manager--remember-point ()
+  "Remember the current manager row for later refreshes."
+  (let ((point (if-let* ((window (get-buffer-window (current-buffer) t)))
+                   (window-point window)
+                 (point))))
+    (save-excursion
+      (goto-char point)
+      (setq agent-shell-manager--last-entry-id
+            (or (tabulated-list-get-id)
+                agent-shell-manager--last-entry-id)
+            agent-shell-manager--last-line-number
+            (line-number-at-pos)))))
+
+(defun agent-shell-manager--sync-window-points ()
+  "Sync visible manager windows to the current buffer point."
+  (let ((buffer (current-buffer))
+        (point (point)))
+    (walk-windows
+     (lambda (window)
+       (when (eq (window-buffer window) buffer)
+         (set-window-point window point)))
+     nil t)))
+
+(defun agent-shell-manager--goto-line-number (line-number)
+  "Move point to LINE-NUMBER, clamping to the visible buffer body."
+  (goto-char (point-min))
+  (forward-line (max 0 (1- line-number)))
+  (when (eobp)
+    (forward-line -1))
+  (beginning-of-line))
+
+(defun agent-shell-manager--goto-entry (entry-id)
+  "Move point to ENTRY-ID and return non-nil if found."
+  (when entry-id
+    (catch 'found
+      (goto-char (point-min))
+      (while (not (eobp))
+        (when (eq (tabulated-list-get-id) entry-id)
+          (beginning-of-line)
+          (throw 'found t))
+        (forward-line 1))
+      nil)))
+
+(defun agent-shell-manager--restore-point (&optional entry-id line-number)
+  "Restore manager point to ENTRY-ID, falling back to LINE-NUMBER."
+  (unless (agent-shell-manager--goto-entry
+           (or entry-id agent-shell-manager--last-entry-id))
+    (agent-shell-manager--goto-line-number
+     (or line-number agent-shell-manager--last-line-number 1)))
+  (agent-shell-manager--sync-window-points)
+  (agent-shell-manager--remember-point))
+
 (defun agent-shell-manager-refresh ()
   "Refresh the buffer list."
   (interactive)
   (when (and agent-shell-manager--global-buffer
              (buffer-live-p agent-shell-manager--global-buffer))
     (with-current-buffer agent-shell-manager--global-buffer
-      (agent-shell-manager--apply-column-configuration
-       agent-shell-manager--column-widths)
-      (setq tabulated-list-entries (agent-shell-manager--entries))
-      (tabulated-list-print t))))
+      (agent-shell-manager--remember-point)
+      (let ((entry-id agent-shell-manager--last-entry-id)
+            (line-number agent-shell-manager--last-line-number))
+        (agent-shell-manager--apply-column-configuration
+         agent-shell-manager--column-widths)
+        (setq tabulated-list-entries (agent-shell-manager--entries))
+        (tabulated-list-print t)
+        (agent-shell-manager--restore-point entry-id line-number)))))
 
 (defun agent-shell-manager--refresh-visible-manager (&rest _args)
   "Refresh the manager when it is visible."
@@ -989,6 +1222,7 @@ If the buffer is already visible, switch to it.
 Otherwise, if another `agent-shell' window is open, reuse it."
   (interactive)
   (when-let* ((buffer (tabulated-list-get-id)))
+    (agent-shell-manager--remember-point)
     (if (buffer-live-p buffer)
         (let ((buffer-window (get-buffer-window buffer t))
               (agent-shell-window nil))
@@ -1051,7 +1285,10 @@ Returns nil if config cannot be determined."
   (with-current-buffer buffer
     ;; Try to match buffer name against known configs
     (when (derived-mode-p 'agent-shell-mode)
-      (let ((buffer-name-prefix (replace-regexp-in-string " Agent @ .*$" "" (buffer-name))))
+      (let ((buffer-name-prefix
+             (replace-regexp-in-string
+              " Agent @ .*$" ""
+              (agent-shell-manager--base-buffer-name buffer))))
         (seq-find (lambda (config)
                     (string= buffer-name-prefix (map-elt config :buffer-name)))
                   agent-shell-agent-configs)))))
@@ -1234,7 +1471,14 @@ When SIDE is non-nil, display it in a side window using SIZE.
 Otherwise, use `agent-shell-manager-side' or the user's
 `display-buffer' configuration."
   (let* ((buffer (get-buffer-create "*Agent-Shell Buffers*"))
-         (old-window (get-buffer-window buffer)))
+         (old-window (get-buffer-window buffer))
+         (entry-id nil)
+         (line-number nil))
+    (with-current-buffer buffer
+      (when (derived-mode-p 'agent-shell-manager-mode)
+        (agent-shell-manager--remember-point)
+        (setq entry-id agent-shell-manager--last-entry-id
+              line-number agent-shell-manager--last-line-number)))
     (when (window-live-p old-window)
       (set-window-dedicated-p old-window nil)
       (when (window-deletable-p old-window)
@@ -1251,10 +1495,13 @@ Otherwise, use `agent-shell-manager-side' or the user's
       (setq agent-shell-manager--global-buffer buffer)
       (with-current-buffer buffer
         (agent-shell-manager-mode)
+        (setq-local agent-shell-manager--last-entry-id entry-id
+                    agent-shell-manager--last-line-number line-number)
         (setq-local agent-shell-manager--column-widths column-widths)
         (when padding
           (setq-local tabulated-list-padding padding))
-        (agent-shell-manager-refresh))
+        (agent-shell-manager-refresh)
+        (agent-shell-manager--restore-point entry-id line-number))
       (set-window-dedicated-p window t)
       (select-window window))))
 
@@ -1293,7 +1540,11 @@ by `delete-other-windows' (C-x 1)."
          (window (get-buffer-window buffer)))
     (if (and window (window-live-p window))
         ;; Window is visible, hide it
-        (delete-window window)
+        (progn
+          (with-current-buffer buffer
+            (when (derived-mode-p 'agent-shell-manager-mode)
+              (agent-shell-manager--remember-point)))
+          (delete-window window))
       ;; Window is not visible, show it.
       (agent-shell-manager--show-buffer))))
 
@@ -1304,6 +1555,11 @@ by `delete-other-windows' (C-x 1)."
                          'agent-shell--update-header-and-mode-line)
   (advice-add 'agent-shell--update-header-and-mode-line
               :after #'agent-shell-manager--refresh-visible-manager))
+
+(unless (advice-member-p #'agent-shell-manager--make-header-with-annotation
+                         'agent-shell--make-header)
+  (advice-add 'agent-shell--make-header
+              :around #'agent-shell-manager--make-header-with-annotation))
 
 (unless (advice-member-p #'agent-shell-manager--after-agent-shell-notification
                          'agent-shell--on-notification)

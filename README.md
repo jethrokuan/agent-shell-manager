@@ -62,6 +62,14 @@ This command toggles the visibility of the agent-shell buffer manager. By defaul
 
 Use `M-x agent-shell-manager-set-annotation` in either an `agent-shell` buffer or on a row in the manager. Enter a label like `Investigating auth bug`; submit empty text to clear it.
 
+Annotations are shown in the manager table and, by default, appended to the project name in the `agent-shell` header. Buffer names are left unchanged because `agent-shell` uses them in parts of its session and event display logic.
+
+If you still want annotated buffer names, opt in explicitly:
+
+```elisp
+(setq agent-shell-manager-rename-buffers-with-annotation t)
+```
+
 ### Key Bindings
 
 Once the manager buffer is open, you can use these keys:
