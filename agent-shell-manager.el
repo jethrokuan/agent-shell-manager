@@ -428,6 +428,22 @@ Otherwise, if another `agent-shell' window is open, reuse it."
       (agent-shell-manager--hide-window)
     (agent-shell-manager-refresh)))
 
+(defun agent-shell-manager--resolved-agent-configs ()
+  "Return `agent-shell-agent-configs' with maker entries realized.
+
+Support both concrete config alists and maker functions, including a
+function-valued `agent-shell-agent-configs' for newer agent-shell versions."
+  (if (fboundp 'agent-shell--resolved-agent-configs)
+      (agent-shell--resolved-agent-configs)
+    (let ((configs (if (functionp agent-shell-agent-configs)
+                       (funcall agent-shell-agent-configs)
+                     agent-shell-agent-configs)))
+      (mapcar (lambda (config)
+                (if (functionp config)
+                    (funcall config)
+                  config))
+              configs))))
+
 (defun agent-shell-manager--get-buffer-config (buffer)
   "Try to determine the config used for BUFFER.
 Returns nil if config cannot be determined."
@@ -437,7 +453,7 @@ Returns nil if config cannot be determined."
       (let ((buffer-name-prefix (replace-regexp-in-string " Agent @ .*$" "" (buffer-name))))
         (seq-find (lambda (config)
                     (string= buffer-name-prefix (map-elt config :buffer-name)))
-                  agent-shell-agent-configs)))))
+                  (agent-shell-manager--resolved-agent-configs))))))
 
 (defun agent-shell-manager-restart ()
   "Restart the `agent-shell' at point.
